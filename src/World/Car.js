@@ -18,10 +18,12 @@ export default class Car {
     // Car physics properties
     this.mass = 800; // kg
     this.maxSpeed = 25; // m/s
-    this.acceleration = 15; // m/s²
+    this.acceleration = 25; // m/s² (increased to overcome static friction)
     this.brakingForce = 20; // m/s²
     this.steeringAngle = 0.3; // radians
     this.steeringSpeed = 2; // radians per second
+    this.steeringTorque = 50; // Angular force for steering
+    this.colliderOffset = 0.1; // Lift collider slightly above ground
 
     // Current state
     this.currentSteering = 0;
@@ -54,7 +56,8 @@ export default class Car {
    * Create physics body for the car
    */
   createPhysicsBody() {
-    // Create box shape
+    // Use box shape but lift it slightly to avoid edge collision issues
+    // The slight lift prevents the car from getting stuck on ground edges
     const shape = new CANNON.Box(
       new CANNON.Vec3(this.length / 2, this.height / 2, this.width / 2)
     );
@@ -63,12 +66,37 @@ export default class Car {
     this.body = new CANNON.Body({ mass: this.mass });
     this.body.addShape(shape);
 
-    // Set initial position (above ground)
-    this.body.position.set(0, 1, 0);
+    // Set initial position (lifted slightly above ground to avoid friction locking)
+    const groundHeight = this.colliderOffset + this.height / 2;
+    this.body.position.set(0, groundHeight, 0);
 
-    // Add damping to prevent sliding
-    this.body.linearDamping = 0.4; // Linear velocity damping
-    this.body.angularDamping = 0.4; // Angular velocity damping
+    // Lock rotation on X and Z axes to prevent tilting/bouncing
+    this.body.fixedRotation = false;
+    this.body.type = CANNON.Body.DYNAMIC;
+    
+    // Create car material with moderate friction (reduced to prevent locking)
+    this.body.material = new CANNON.Material('carMaterial');
+    this.body.material.friction = 0.6; // Moderate friction (reduced from 1.0)
+    this.body.material.restitution = 0.0; // No bouncing
+
+    // Create contact material between car and ground
+    if (this.physicsWorld.groundMaterial) {
+      const contactMaterial = new CANNON.ContactMaterial(
+        this.body.material,
+        this.physicsWorld.groundMaterial,
+        {
+          friction: 0.6, // Moderate friction (reduced from 1.0)
+          restitution: 0.0,
+          contactEquationStiffness: 1e8,
+          contactEquationRelaxation: 3
+        }
+      );
+      this.physicsWorld.world.addContactMaterial(contactMaterial);
+    }
+
+    // Moderate damping (reduced to prevent stalling)
+    this.body.linearDamping = 0.3; // Reduced from 0.9
+    this.body.angularDamping = 0.5; // Reduced from 0.9
 
     // Add to physics world
     this.physicsWorld.world.addBody(this.body);
@@ -172,7 +200,33 @@ export default class Car {
     // Get delta time in seconds
     const deltaTime = this.experience.time.delta / 1000;
 
-    // Handle steering
+    // Keep car at proper height above ground (prevent sinking)
+    const groundHeight = this.colliderOffset + this.height / 2;
+    if (this.body.position.y < groundHeight) {
+      this.body.position.y = groundHeight;
+    }
+
+    // Prevent vertical velocity accumulation (lock Y velocity)
+    const velocity = this.body.velocity;
+    if (Math.abs(velocity.y) > 0.01) {
+      velocity.y = 0;
+      this.body.velocity = velocity;
+    }
+
+    // Lock rotation to Y axis only (prevent pitch and roll)
+    const angularVelocity = this.body.angularVelocity;
+    angularVelocity.x = 0; // Lock pitch rotation
+    angularVelocity.z = 0; // Lock roll rotation
+    this.body.angularVelocity = angularVelocity;
+
+    // Get car's forward direction in world space (local Z+)
+    const forward = new CANNON.Vec3();
+    this.body.quaternion.vmult(new CANNON.Vec3(0, 0, 1), forward);
+
+    // Calculate current speed in forward direction
+    this.currentSpeed = forward.dot(velocity);
+
+    // Handle steering (yaw rotation around Y axis)
     if (this.keys.left) {
       this.currentSteering = Math.min(
         this.currentSteering + this.steeringSpeed * deltaTime,
@@ -198,60 +252,81 @@ export default class Car {
       }
     }
 
-    // Get car's forward direction in world space (for speed calculation)
-    const forward = new CANNON.Vec3();
-    this.body.quaternion.vmult(new CANNON.Vec3(0, 0, 1), forward);
+    // Apply steering torque (yaw rotation around Y axis) - only when moving
+    if (Math.abs(this.currentSpeed) > 0.1) {
+      const steeringTorque = this.currentSteering * this.steeringTorque * Math.abs(this.currentSpeed);
+      // Apply torque around world Y axis (same as local Y for yaw-only rotation)
+      this.body.applyTorque(new CANNON.Vec3(0, steeringTorque, 0));
+    } else {
+      // When not moving, damp any angular velocity to prevent unwanted rotation
+      const angularVel = this.body.angularVelocity;
+      angularVel.y *= 0.8; // Damp yaw rotation when stopped
+      this.body.angularVelocity = angularVel;
+    }
 
-    // Calculate current speed in forward direction
-    const velocity = this.body.velocity;
-    this.currentSpeed = forward.dot(velocity);
-
-    // Handle acceleration/braking (using local coordinates)
+    // Handle acceleration/braking (force along local Z axis)
     if (this.keys.forward) {
       // Accelerate forward (local Z+)
-      if (this.currentSpeed < this.maxSpeed) {
-        this.body.applyLocalForce(
-          new CANNON.Vec3(0, 0, this.acceleration * this.mass),
-          new CANNON.Vec3(0, 0, 0)
-        );
+      // Always apply force to overcome static friction, even at max speed
+      const forceMagnitude = this.acceleration * this.mass;
+      const force = new CANNON.Vec3(0, 0, forceMagnitude);
+      this.body.applyLocalForce(force, new CANNON.Vec3(0, 0, 0));
+      
+      // Limit speed after applying force
+      if (this.currentSpeed > this.maxSpeed) {
+        const localVelocity = new CANNON.Vec3();
+        const invQuat = this.body.quaternion.inverse();
+        invQuat.vmult(velocity, localVelocity);
+        localVelocity.z = Math.min(localVelocity.z, this.maxSpeed);
+        const worldVelocity = new CANNON.Vec3();
+        this.body.quaternion.vmult(localVelocity, worldVelocity);
+        worldVelocity.y = 0;
+        this.body.velocity = worldVelocity;
       }
     } else if (this.keys.backward) {
       // Brake or reverse (local Z-)
       if (this.currentSpeed > -this.maxSpeed * 0.5) {
-        this.body.applyLocalForce(
-          new CANNON.Vec3(0, 0, -this.brakingForce * this.mass),
-          new CANNON.Vec3(0, 0, 0)
-        );
+        const force = new CANNON.Vec3(0, 0, -this.brakingForce * this.mass);
+        this.body.applyLocalForce(force, new CANNON.Vec3(0, 0, 0));
       }
     } else {
-      // Apply braking when no input (natural deceleration)
-      this.body.applyLocalForce(
-        new CANNON.Vec3(0, 0, -this.brakingForce * 0.3 * this.mass),
-        new CANNON.Vec3(0, 0, 0)
-      );
+      // Apply moderate braking when no input (natural deceleration)
+      const brakeForce = new CANNON.Vec3(0, 0, -this.brakingForce * 0.5 * this.mass);
+      this.body.applyLocalForce(brakeForce, new CANNON.Vec3(0, 0, 0));
+      
+      // When speed is very low, apply additional damping to ensure complete stop
+      if (Math.abs(this.currentSpeed) < 0.2) {
+        // Get local velocity
+        const localVelocity = new CANNON.Vec3();
+        const invQuat = this.body.quaternion.inverse();
+        invQuat.vmult(velocity, localVelocity);
+        
+        // Strongly damp forward/backward and lateral movement
+        localVelocity.x *= 0.8; // Damp lateral movement
+        localVelocity.z *= 0.8; // Damp forward/backward movement
+        
+        // Convert back to world space
+        const worldVelocity = new CANNON.Vec3();
+        this.body.quaternion.vmult(localVelocity, worldVelocity);
+        worldVelocity.y = 0; // Keep Y locked
+        this.body.velocity = worldVelocity;
+      }
     }
 
-    // Apply steering (only when moving) - local X axis
-    if (Math.abs(this.currentSpeed) > 0.1) {
-      this.body.applyLocalForce(
-        new CANNON.Vec3(
-          this.currentSteering * Math.abs(this.currentSpeed) * this.mass * 0.5,
-          0,
-          0
-        ),
-        new CANNON.Vec3(0, 0, 0)
-      );
-    }
+    // Speed limiting is now handled in forward/backward sections above
+    // This ensures forces are always applied to overcome static friction
 
-    // Limit speed
-    const speed = velocity.length();
-    if (speed > this.maxSpeed) {
-      velocity.scale(this.maxSpeed / speed);
-      this.body.velocity = velocity;
-    }
-
-    // Sync mesh with physics body
-    this.mesh.position.copy(this.body.position);
-    this.mesh.quaternion.copy(this.body.quaternion);
+    // Sync mesh with physics body (perfect alignment)
+    this.mesh.position.set(
+      this.body.position.x,
+      this.body.position.y,
+      this.body.position.z
+    );
+    this.mesh.quaternion.set(
+      this.body.quaternion.x,
+      this.body.quaternion.y,
+      this.body.quaternion.z,
+      this.body.quaternion.w
+    );
   }
 }
