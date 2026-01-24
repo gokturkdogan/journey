@@ -26,8 +26,8 @@ export default class Camera {
 
     // Mouse orbit control settings
     // Initial cinematic overview: left side, elevated, diagonal angle
-    this.orbitYaw = -Math.PI / 4; // Horizontal rotation - left side of car (45 degrees)
-    this.orbitPitch = Math.PI / 6; // Vertical rotation - elevated angle (30 degrees up)
+    this.orbitYaw = -Math.PI / 2; // Horizontal rotation - left side of car (45 degrees)
+    this.orbitPitch = Math.PI / 1.2; // Vertical rotation - elevated angle (30 degrees up)
     this.orbitSensitivity = 0.003; // Mouse sensitivity
     this.pitchMin = -Math.PI / 3; // Limit looking down (60 degrees)
     this.pitchMax = Math.PI / 3; // Limit looking up (60 degrees)
