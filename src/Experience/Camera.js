@@ -143,7 +143,15 @@ export default class Camera {
     }
 
     // Smoothly interpolate rig position (lerp for cinematic lag)
-    this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);
+    // If car just teleported, snap camera immediately
+    const distance = this.currentRigPosition.distanceTo(targetRigPosition);
+    if (distance > 20) {
+      // Large distance change indicates teleport - snap immediately
+      this.currentRigPosition.copy(targetRigPosition);
+    } else {
+      // Normal smooth interpolation
+      this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);
+    }
     this.rig.position.copy(this.currentRigPosition);
 
     // Camera looks at the car and timeline road

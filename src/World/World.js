@@ -129,27 +129,19 @@ export default class World {
    * Create memory landmarks along the timeline road
    */
   createMemoryLandmarks() {
-    // Define landmark positions along the timeline (chronological order)
-    const landmarkPositions = [
-      { z: 20, side: 'left' },   // Early memory
-      { z: 50, side: 'right' },  // Memory 2
-      { z: 80, side: 'left' },   // Memory 3
-      { z: 120, side: 'right' }, // Memory 4
-      { z: 160, side: 'left' },  // Memory 5
-      { z: 200, side: 'right' }, // Memory 6
-      { z: 240, side: 'left' },  // Memory 7
-      { z: 280, side: 'right' }, // Memory 8
-      { z: 320, side: 'left' },  // Memory 9
-      { z: 360, side: 'right' }, // Memory 10
-      { z: 400, side: 'left' },  // Memory 11
-      { z: 440, side: 'right' }, // Memory 12
-    ];
+    // Get memory data from MemoryManager
+    const memories = this.experience.memoryManager.getMemoriesInOrder();
 
     // Store landmark references for proximity detection
     this.memoryLandmarks = [];
     
-    landmarkPositions.forEach((pos, index) => {
-      const landmark = this.createMemoryLandmark(pos.z, pos.side, index + 1);
+    memories.forEach((memory, index) => {
+      // Extract position from memory data
+      const zPosition = memory.worldPosition.z;
+      const side = memory.worldPosition.x < 0 ? 'left' : 'right';
+      
+      const landmark = this.createMemoryLandmark(zPosition, side, memory.order);
+      landmark.memoryId = memory.id; // Link landmark to memory
       this.memoryLandmarks.push(landmark);
     });
   }
@@ -337,7 +329,7 @@ export default class World {
       }
     });
 
-    // Update highlight state
+    // Update highlight state and active memory
     if (closestLandmark !== this.currentHighlightedLandmark) {
       // Reset previous highlight
       if (this.currentHighlightedLandmark) {
@@ -346,6 +338,16 @@ export default class World {
       
       // Set new highlight
       this.currentHighlightedLandmark = closestLandmark;
+      
+      // Update active memory in MemoryManager
+      if (closestLandmark && closestLandmark.memoryId) {
+        this.experience.memoryManager.setActiveMemory(closestLandmark.memoryId);
+      }
+    } else if (!closestLandmark && this.currentHighlightedLandmark) {
+      // Car exited all memory zones
+      this.currentHighlightedLandmark.highlightIntensity = 0;
+      this.currentHighlightedLandmark = null;
+      this.experience.memoryManager.clearActiveMemory();
     }
 
     // Update all landmarks with smooth transitions
