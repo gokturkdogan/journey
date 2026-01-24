@@ -132,174 +132,179 @@ export default class World {
     // Get memory data from MemoryManager
     const memories = this.experience.memoryManager.getMemoriesInOrder();
 
-    // Store landmark references for proximity detection
+    // Store landmark references for proximity detection (only real memories)
     this.memoryLandmarks = [];
     
-    memories.forEach((memory, index) => {
-      // Extract position from memory data
-      const zPosition = memory.worldPosition.z;
-      const side = memory.worldPosition.x < 0 ? 'left' : 'right';
+    // Left side X position for real memories
+    const leftSideX = -6;
+    // Right side X position for decorative objects
+    const rightSideX = 6;
+    
+    memories.forEach((memory) => {
+      // Create REAL memory on left side (X < 0)
+      const memoryGroup = this.createMemoryPrefab(memory, leftSideX);
+      const memoryLandmark = {
+        group: memoryGroup,
+        structure: memoryGroup.getObjectByName('buildingMesh'),
+        structureMaterial: memoryGroup.getObjectByName('buildingMesh').material,
+        position: new THREE.Vector3(leftSideX, 0, memory.zPosition),
+        originalScale: 1,
+        originalEmissive: new THREE.Color(0x000000),
+        originalColor: memoryGroup.getObjectByName('buildingMesh').material.color.clone(),
+        highlightIntensity: 0,
+        memoryId: memory.id,
+        isMemory: true
+      };
+      this.memoryLandmarks.push(memoryLandmark);
       
-      const landmark = this.createMemoryLandmark(zPosition, side, memory.order);
-      landmark.memoryId = memory.id; // Link landmark to memory
-      this.memoryLandmarks.push(landmark);
+      // Create DECORATIVE copy on right side (X > 0)
+      this.createDecorativeCopy(memory, rightSideX);
     });
   }
 
   /**
-   * Create a single memory landmark structure
-   * @param {number} zPosition - Position along timeline (Z axis)
-   * @param {string} side - 'left' or 'right' side of road
-   * @param {number} memoryIndex - Index for visual variation
+   * Create text texture from canvas
+   * @param {string} text - Text to render
+   * @param {number} fontSize - Font size in pixels
+   * @param {string} backgroundColor - Background color hex
+   * @param {string} textColor - Text color hex
+   * @returns {THREE.CanvasTexture} Canvas texture
    */
-  createMemoryLandmark(zPosition, side, memoryIndex) {
-    const landmarkGroup = new THREE.Group();
-    const sideOffset = side === 'left' ? -8 : 8; // Distance from road center
-    landmarkGroup.position.set(sideOffset, 0, zPosition);
+  createTextTexture(text, fontSize = 32, backgroundColor = '#ffffff', textColor = '#000000') {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    context.font = `bold ${fontSize}px Arial`;
+    const metrics = context.measureText(text);
+    const textWidth = metrics.width;
+    const textHeight = fontSize;
+    
+    canvas.width = textWidth + 40;
+    canvas.height = textHeight + 20;
+    
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    
+    context.fillStyle = textColor;
+    context.font = `bold ${fontSize}px Arial`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+  }
 
-    // Base structure (building/platform)
-    const baseWidth = 3;
-    const baseDepth = 3;
-    const baseHeight = 1;
-    const baseGeometry = new THREE.BoxGeometry(baseWidth, baseHeight, baseDepth);
-    const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x5a5a5a, // Neutral gray base
+  /**
+   * Create memory prefab group
+   * @param {Object} memory - Memory data object
+   * @param {number} xPosition - X position (right side > 0)
+   * @returns {THREE.Group} Memory group
+   */
+  createMemoryPrefab(memory, xPosition) {
+    const memoryGroup = new THREE.Group();
+    memoryGroup.name = `memory-${memory.id}`;
+    memoryGroup.position.set(xPosition, 0, memory.zPosition);
+    memoryGroup.userData.isMemory = true;
+    memoryGroup.userData.memoryId = memory.id;
+
+    // 1) Building (main structure)
+    const buildingWidth = 3;
+    const buildingHeight = 4;
+    const buildingDepth = 3;
+    const buildingGeometry = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingDepth);
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: 0x6a6a6a,
       roughness: 0.7,
       metalness: 0.2
     });
-    const base = new THREE.Mesh(baseGeometry, baseMaterial);
-    base.position.y = baseHeight / 2;
-    base.castShadow = true;
-    base.receiveShadow = true;
-    landmarkGroup.add(base);
+    const buildingMesh = new THREE.Mesh(buildingGeometry, buildingMaterial);
+    buildingMesh.name = 'buildingMesh';
+    buildingMesh.position.y = buildingHeight / 2;
+    buildingMesh.castShadow = true;
+    buildingMesh.receiveShadow = true;
+    memoryGroup.add(buildingMesh);
 
-    // Main structure (building body) - varies by index
-    const structureHeight = 2 + (memoryIndex % 3) * 0.5; // Vary height
-    const structureWidth = 2.5;
-    const structureDepth = 2.5;
-    const structureGeometry = new THREE.BoxGeometry(
-      structureWidth,
-      structureHeight,
-      structureDepth
-    );
-    // Neutral but readable building colors
-    const buildingColors = [
-      0x6a6a6a, // Light gray
-      0x7a7a7a, // Medium gray
-      0x6a7a6a, // Slight green-gray
-      0x7a6a7a, // Slight purple-gray
-      0x6a6a7a, // Slight blue-gray
-      0x7a7a6a, // Slight yellow-gray
-    ];
-    const structureMaterial = new THREE.MeshStandardMaterial({
-      color: buildingColors[memoryIndex % buildingColors.length], // Neutral readable colors
-      roughness: 0.6,
-      metalness: 0.3,
-      emissive: 0x000000, // Start with no emissive
-      emissiveIntensity: 0
-    });
-    const structure = new THREE.Mesh(structureGeometry, structureMaterial);
-    structure.position.y = baseHeight + structureHeight / 2;
-    structure.castShadow = true;
-    structure.receiveShadow = true;
-    landmarkGroup.add(structure);
-
-    // Billboard (placeholder for image)
-    const billboardWidth = 2;
-    const billboardHeight = 1.5;
-    const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
-    const billboardMaterial = new THREE.MeshStandardMaterial({
-      color: 0x8a8a8a, // Lighter color for contrast (billboard placeholder)
-      roughness: 0.8,
-      metalness: 0.1,
-      side: THREE.DoubleSide,
-      emissive: 0x000000, // Start with no emissive
-      emissiveIntensity: 0
-    });
-    const billboard = new THREE.Mesh(billboardGeometry, billboardMaterial);
-    billboard.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight / 2 + 0.2,
-      structureDepth / 2 + 0.1
-    );
-    billboard.rotation.y = side === 'left' ? -Math.PI / 4 : Math.PI / 4; // Face road
-    billboard.castShadow = true;
-    landmarkGroup.add(billboard);
-
-    // Billboard frame
-    const frameThickness = 0.1;
-    const frameGeometry = new THREE.BoxGeometry(
-      billboardWidth + frameThickness * 2,
-      billboardHeight + frameThickness * 2,
-      frameThickness
-    );
-    const frameMaterial = new THREE.MeshStandardMaterial({
-      color: 0x666666,
-      roughness: 0.5,
-      metalness: 0.4
-    });
-    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
-    frame.position.copy(billboard.position);
-    frame.position.z += 0.05;
-    frame.rotation.y = billboard.rotation.y;
-    frame.castShadow = true;
-    landmarkGroup.add(frame);
-
-    // Title/Sign (placeholder)
-    const signWidth = 1.5;
-    const signHeight = 0.3;
-    const signGeometry = new THREE.PlaneGeometry(signWidth, signHeight);
-    const signMaterial = new THREE.MeshStandardMaterial({
-      color: 0x555555,
-      roughness: 0.7,
-      metalness: 0.2,
+    // 2) Title sign (memory title)
+    const titleSignWidth = 2.5;
+    const titleSignHeight = 0.8;
+    const titleSignGeometry = new THREE.PlaneGeometry(titleSignWidth, titleSignHeight);
+    const titleTexture = this.createTextTexture(memory.title, 24, '#ffffff', '#000000');
+    const titleSignMaterial = new THREE.MeshStandardMaterial({
+      map: titleTexture,
       side: THREE.DoubleSide
     });
-    const sign = new THREE.Mesh(signGeometry, signMaterial);
-    sign.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight + 0.5,
-      structureDepth / 2 + 0.1
-    );
-    sign.rotation.y = billboard.rotation.y;
-    sign.castShadow = true;
-    landmarkGroup.add(sign);
+    const titleSignMesh = new THREE.Mesh(titleSignGeometry, titleSignMaterial);
+    titleSignMesh.name = 'titleSignMesh';
+    titleSignMesh.position.set(0, buildingHeight + titleSignHeight / 2 + 0.3, buildingDepth / 2 + 0.1);
+    titleSignMesh.rotation.y = Math.PI;
+    titleSignMesh.castShadow = true;
+    memoryGroup.add(titleSignMesh);
 
-    // Sign support pole
-    const poleGeometry = new THREE.CylinderGeometry(0.05, 0.05, signHeight, 8);
-    const poleMaterial = new THREE.MeshStandardMaterial({
-      color: 0x444444,
-      roughness: 0.6,
-      metalness: 0.3
+    // 3) Billboard (cover image placeholder)
+    const billboardWidth = 2.5;
+    const billboardHeight = 2;
+    const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
+    const billboardMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8a8a8a,
+      side: THREE.DoubleSide
     });
-    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
-    pole.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight + signHeight / 2 + 0.2,
-      structureDepth / 2 + 0.1
-    );
-    pole.rotation.z = Math.PI / 2;
-    pole.castShadow = true;
-    landmarkGroup.add(pole);
+    const billboardMesh = new THREE.Mesh(billboardGeometry, billboardMaterial);
+    billboardMesh.name = 'billboardMesh';
+    billboardMesh.position.set(buildingWidth / 2 + billboardWidth / 2 + 0.5, buildingHeight / 2, 0);
+    billboardMesh.rotation.y = -Math.PI / 2;
+    billboardMesh.castShadow = true;
+    memoryGroup.add(billboardMesh);
 
-    this.scene.instance.add(landmarkGroup);
+    // 4) Date sign (smaller)
+    const dateSignWidth = 1.5;
+    const dateSignHeight = 0.4;
+    const dateSignGeometry = new THREE.PlaneGeometry(dateSignWidth, dateSignHeight);
+    const dateTexture = this.createTextTexture(memory.date, 16, '#f0f0f0', '#333333');
+    const dateSignMaterial = new THREE.MeshStandardMaterial({
+      map: dateTexture,
+      side: THREE.DoubleSide
+    });
+    const dateSignMesh = new THREE.Mesh(dateSignGeometry, dateSignMaterial);
+    dateSignMesh.name = 'dateSignMesh';
+    dateSignMesh.position.set(0, buildingHeight + dateSignHeight / 2 + 1.2, buildingDepth / 2 + 0.1);
+    dateSignMesh.rotation.y = Math.PI;
+    dateSignMesh.castShadow = true;
+    memoryGroup.add(dateSignMesh);
 
-    // Store original states for smooth transitions
-    const landmarkData = {
-      group: landmarkGroup,
-      structure: structure,
-      structureMaterial: structureMaterial,
-      billboard: billboard,
-      billboardMaterial: billboardMaterial,
-      position: new THREE.Vector3(sideOffset, 0, zPosition),
-      originalScale: 1,
-      originalEmissive: new THREE.Color(0x000000),
-      originalColor: structureMaterial.color.clone(),
-      billboardOriginalColor: billboardMaterial.color.clone(),
-      highlightIntensity: 0
-    };
+    this.scene.instance.add(memoryGroup);
+    return memoryGroup;
+  }
 
-    return landmarkData;
+  /**
+   * Create decorative copy (building only, no signs/billboard)
+   * @param {Object} memory - Memory data object
+   * @param {number} xPosition - X position (left side < 0)
+   */
+  createDecorativeCopy(memory, xPosition) {
+    const decorativeGroup = new THREE.Group();
+    decorativeGroup.position.set(xPosition, 0, memory.zPosition);
+    decorativeGroup.userData.isDecorative = true;
+    decorativeGroup.userData.isMemory = false;
+
+    // Only building, no signs or billboard
+    const buildingWidth = 3;
+    const buildingHeight = 4;
+    const buildingDepth = 3;
+    const buildingGeometry = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingDepth);
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: 0x5a5a5a,
+      roughness: 0.7,
+      metalness: 0.2
+    });
+    const buildingMesh = new THREE.Mesh(buildingGeometry, buildingMaterial);
+    buildingMesh.position.y = buildingHeight / 2;
+    buildingMesh.castShadow = true;
+    buildingMesh.receiveShadow = true;
+    decorativeGroup.add(buildingMesh);
+
+    this.scene.instance.add(decorativeGroup);
   }
 
   /**
@@ -350,8 +355,11 @@ export default class World {
       this.experience.memoryManager.clearActiveMemory();
     }
 
-    // Update all landmarks with smooth transitions
+    // Update all landmarks with smooth transitions (only real memories)
     this.memoryLandmarks.forEach((landmark) => {
+      // Skip if not a memory (safety check)
+      if (!landmark.isMemory) return;
+      
       const isHighlighted = landmark === this.currentHighlightedLandmark;
       
       // Smoothly transition highlight intensity
@@ -388,16 +396,6 @@ export default class World {
       const colorBoost = new THREE.Color(landmark.originalColor);
       colorBoost.lerp(new THREE.Color(0xffffff), intensity * 0.3); // 30% brighter at max
       landmark.structureMaterial.color.lerp(colorBoost, 0.1);
-
-      // Billboard glow effect
-      const billboardGlow = new THREE.Color(landmark.billboardOriginalColor);
-      billboardGlow.lerp(new THREE.Color(0xaaaaaa), intensity * 0.4); // Lighter at max
-      landmark.billboardMaterial.color.lerp(billboardGlow, 0.1);
-      landmark.billboardMaterial.emissive.lerp(
-        new THREE.Color(0xffffff).multiplyScalar(intensity * 0.3),
-        0.1
-      );
-      landmark.billboardMaterial.emissiveIntensity = intensity * 0.3;
     });
   }
 }
