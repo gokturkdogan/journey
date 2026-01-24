@@ -115,19 +115,22 @@ export default class Camera {
       car.body.position.z
     );
 
-    // Calculate orbit position around car using yaw and pitch
+    // Calculate orbit position around car using spherical coordinates
+    // Yaw: horizontal rotation around Y axis
+    // Pitch: vertical rotation (tilt up/down)
     const orbitDistance = this.followDistance;
-    const orbitX = Math.sin(this.orbitPitch) * orbitDistance;
-    const orbitY = Math.cos(this.orbitPitch) * orbitDistance;
-    const orbitZ = Math.cos(this.orbitYaw) * orbitY;
-    const orbitXOffset = Math.sin(this.orbitYaw) * orbitY;
+    
+    // Spherical to Cartesian conversion
+    const x = orbitDistance * Math.cos(this.orbitPitch) * Math.sin(this.orbitYaw);
+    const y = orbitDistance * Math.sin(this.orbitPitch);
+    const z = orbitDistance * Math.cos(this.orbitPitch) * Math.cos(this.orbitYaw);
 
     // Calculate target rig position (orbiting around car)
     const targetRigPosition = new THREE.Vector3();
     targetRigPosition.copy(carPosition);
-    targetRigPosition.x += orbitXOffset;
-    targetRigPosition.y += this.followHeight + orbitX; // Add pitch offset
-    targetRigPosition.z += orbitZ;
+    targetRigPosition.x += x;
+    targetRigPosition.y += this.followHeight + y; // Add pitch offset and base height
+    targetRigPosition.z += z;
 
     // Smoothly interpolate rig position (lerp for cinematic lag)
     this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);

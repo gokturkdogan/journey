@@ -1,279 +1,268 @@
 import * as THREE from 'three';
 
 /**
- * World - Manages the explorable world with road and story zones
+ * World - Manages the timeline-style world with long straight road
  */
 export default class World {
   constructor(experience) {
     this.experience = experience;
     this.scene = this.experience.scene;
 
+    // Timeline dimensions
+    this.timelineLength = 500; // Long timeline road
+    this.roadWidth = 10; // Road width
+    this.groundWidth = 30; // Ground extends beyond road
+
     // Create world elements
     this.createGround();
     this.createRoad();
-    this.createZones();
+    this.createRoadEdges();
+    this.createMemoryLandmarks();
   }
 
   /**
-   * Create large ground plane
+   * Create long ground plane for timeline
    */
   createGround() {
-    const groundSize = 200;
-    
-    // Create grid helper for reference
-    const gridHelper = new THREE.GridHelper(groundSize, 50, 0x333333, 0x222222);
-    gridHelper.position.y = 0;
-    this.scene.instance.add(gridHelper);
-
-    // Create ground plane mesh
-    const planeGeometry = new THREE.PlaneGeometry(groundSize, groundSize);
-    const planeMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1a1a1a,
-      roughness: 0.8,
-      metalness: 0.1
+    // Create ground plane (long and narrow, like a timeline)
+    const groundGeometry = new THREE.PlaneGeometry(
+      this.groundWidth,
+      this.timelineLength
+    );
+    const groundMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0f0f0f,
+      roughness: 0.9,
+      metalness: 0.0
     });
-    const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-    plane.rotation.x = -Math.PI / 2;
-    plane.position.y = 0;
-    plane.receiveShadow = true;
-    this.scene.instance.add(plane);
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(0, 0, this.timelineLength / 2);
+    ground.receiveShadow = true;
+    this.scene.instance.add(ground);
   }
 
   /**
-   * Create visible road/path that guides forward
+   * Create long straight road (timeline path)
    */
   createRoad() {
-    const roadWidth = 8;
-    const roadLength = 150;
-    
-    // Create road plane
-    const roadGeometry = new THREE.PlaneGeometry(roadWidth, roadLength);
+    // Main road surface
+    const roadGeometry = new THREE.PlaneGeometry(
+      this.roadWidth,
+      this.timelineLength
+    );
     const roadMaterial = new THREE.MeshStandardMaterial({
-      color: 0x333333,
-      roughness: 0.7,
-      metalness: 0.2
+      color: 0x2a2a2a,
+      roughness: 0.6,
+      metalness: 0.1
     });
     const road = new THREE.Mesh(roadGeometry, roadMaterial);
     road.rotation.x = -Math.PI / 2;
-    road.position.set(0, 0.01, roadLength / 2); // Slightly above ground
+    road.position.set(0, 0.01, this.timelineLength / 2);
     road.receiveShadow = true;
     this.scene.instance.add(road);
 
-    // Add road markings (center line)
-    const markingGeometry = new THREE.PlaneGeometry(0.2, roadLength);
-    const markingMaterial = new THREE.MeshStandardMaterial({
+    // Center line (timeline indicator)
+    const centerLineGeometry = new THREE.PlaneGeometry(0.15, this.timelineLength);
+    const centerLineMaterial = new THREE.MeshStandardMaterial({
       color: 0xffff00,
       emissive: 0xffff00,
-      emissiveIntensity: 0.3
+      emissiveIntensity: 0.5
     });
-    const centerLine = new THREE.Mesh(markingGeometry, markingMaterial);
+    const centerLine = new THREE.Mesh(centerLineGeometry, centerLineMaterial);
     centerLine.rotation.x = -Math.PI / 2;
-    centerLine.position.set(0, 0.02, roadLength / 2);
+    centerLine.position.set(0, 0.02, this.timelineLength / 2);
     this.scene.instance.add(centerLine);
   }
 
   /**
-   * Create story zones along the road
+   * Create road edges/boundaries
    */
-  createZones() {
-    // Zone 1: Start / Introduction (at origin)
-    this.createZone1();
+  createRoadEdges() {
+    const edgeHeight = 0.1;
+    const edgeWidth = 0.3;
 
-    // Zone 2: Photo Gallery area (further along road)
-    this.createZone2();
+    // Left edge
+    const leftEdgeGeometry = new THREE.BoxGeometry(
+      edgeWidth,
+      edgeHeight,
+      this.timelineLength
+    );
+    const edgeMaterial = new THREE.MeshStandardMaterial({
+      color: 0x444444,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const leftEdge = new THREE.Mesh(leftEdgeGeometry, edgeMaterial);
+    leftEdge.position.set(
+      -this.roadWidth / 2 - edgeWidth / 2,
+      edgeHeight / 2,
+      this.timelineLength / 2
+    );
+    leftEdge.castShadow = true;
+    leftEdge.receiveShadow = true;
+    this.scene.instance.add(leftEdge);
 
-    // Zone 3: Memory / Story moment (even further)
-    this.createZone3();
-
-    // Zone 4: Ending / Future area (end of road)
-    this.createZone4();
+    // Right edge
+    const rightEdge = new THREE.Mesh(leftEdgeGeometry, edgeMaterial);
+    rightEdge.position.set(
+      this.roadWidth / 2 + edgeWidth / 2,
+      edgeHeight / 2,
+      this.timelineLength / 2
+    );
+    rightEdge.castShadow = true;
+    rightEdge.receiveShadow = true;
+    this.scene.instance.add(rightEdge);
   }
 
   /**
-   * Zone 1: Start / Introduction
+   * Create memory landmarks along the timeline road
    */
-  createZone1() {
-    const zone1Group = new THREE.Group();
-    zone1Group.position.set(0, 0, 0);
+  createMemoryLandmarks() {
+    // Define landmark positions along the timeline (chronological order)
+    const landmarkPositions = [
+      { z: 20, side: 'left' },   // Early memory
+      { z: 50, side: 'right' },  // Memory 2
+      { z: 80, side: 'left' },   // Memory 3
+      { z: 120, side: 'right' }, // Memory 4
+      { z: 160, side: 'left' },  // Memory 5
+      { z: 200, side: 'right' }, // Memory 6
+      { z: 240, side: 'left' },  // Memory 7
+      { z: 280, side: 'right' }, // Memory 8
+      { z: 320, side: 'left' },  // Memory 9
+      { z: 360, side: 'right' }, // Memory 10
+      { z: 400, side: 'left' },  // Memory 11
+      { z: 440, side: 'right' }, // Memory 12
+    ];
 
-    // Main structure - large box (start platform)
-    const boxGeometry = new THREE.BoxGeometry(12, 2, 12);
-    const boxMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4a90e2,
-      metalness: 0.3,
-      roughness: 0.7
+    landmarkPositions.forEach((pos, index) => {
+      this.createMemoryLandmark(pos.z, pos.side, index + 1);
     });
-    const startBox = new THREE.Mesh(boxGeometry, boxMaterial);
-    startBox.position.y = 1;
-    startBox.castShadow = true;
-    startBox.receiveShadow = true;
-    zone1Group.add(startBox);
-
-    // Marker cylinder on top
-    const cylinderGeometry = new THREE.CylinderGeometry(1, 1, 3, 8);
-    const cylinderMaterial = new THREE.MeshStandardMaterial({
-      color: 0x5ba3f5,
-      metalness: 0.5,
-      roughness: 0.5
-    });
-    const marker = new THREE.Mesh(cylinderGeometry, cylinderMaterial);
-    marker.position.y = 3.5;
-    marker.castShadow = true;
-    zone1Group.add(marker);
-
-    this.scene.instance.add(zone1Group);
   }
 
   /**
-   * Zone 2: Photo Gallery area
+   * Create a single memory landmark structure
+   * @param {number} zPosition - Position along timeline (Z axis)
+   * @param {string} side - 'left' or 'right' side of road
+   * @param {number} memoryIndex - Index for visual variation
    */
-  createZone2() {
-    const zone2Group = new THREE.Group();
-    zone2Group.position.set(0, 0, 40);
+  createMemoryLandmark(zPosition, side, memoryIndex) {
+    const landmarkGroup = new THREE.Group();
+    const sideOffset = side === 'left' ? -8 : 8; // Distance from road center
+    landmarkGroup.position.set(sideOffset, 0, zPosition);
 
-    // Main structure - wide platform
-    const platformGeometry = new THREE.BoxGeometry(15, 1, 15);
-    const platformMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe24a4a,
-      metalness: 0.2,
-      roughness: 0.8
-    });
-    const platform = new THREE.Mesh(platformGeometry, platformMaterial);
-    platform.position.y = 0.5;
-    platform.castShadow = true;
-    platform.receiveShadow = true;
-    zone2Group.add(platform);
-
-    // Photo frames (vertical planes)
-    for (let i = 0; i < 4; i++) {
-      const frameGeometry = new THREE.PlaneGeometry(3, 4);
-      const frameMaterial = new THREE.MeshStandardMaterial({
-        color: 0xf5a35b,
-        side: THREE.DoubleSide,
-        metalness: 0.4,
-        roughness: 0.6
-      });
-      const frame = new THREE.Mesh(frameGeometry, frameMaterial);
-      const angle = (i / 4) * Math.PI * 2;
-      frame.position.set(
-        Math.cos(angle) * 5,
-        2.5,
-        Math.sin(angle) * 5
-      );
-      frame.rotation.y = angle + Math.PI;
-      frame.castShadow = true;
-      zone2Group.add(frame);
-    }
-
-    this.scene.instance.add(zone2Group);
-  }
-
-  /**
-   * Zone 3: Memory / Story moment
-   */
-  createZone3() {
-    const zone3Group = new THREE.Group();
-    zone3Group.position.set(0, 0, 80);
-
-    // Main structure - elevated platform
-    const baseGeometry = new THREE.BoxGeometry(10, 1, 10);
+    // Base structure (building/platform)
+    const baseWidth = 3;
+    const baseDepth = 3;
+    const baseHeight = 1;
+    const baseGeometry = new THREE.BoxGeometry(baseWidth, baseHeight, baseDepth);
     const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4ae24a,
-      metalness: 0.3,
-      roughness: 0.7
+      color: 0x3a3a3a,
+      roughness: 0.7,
+      metalness: 0.2
     });
     const base = new THREE.Mesh(baseGeometry, baseMaterial);
-    base.position.y = 0.5;
+    base.position.y = baseHeight / 2;
     base.castShadow = true;
     base.receiveShadow = true;
-    zone3Group.add(base);
+    landmarkGroup.add(base);
 
-    // Memory monument - tall cylinder
-    const monumentGeometry = new THREE.CylinderGeometry(1.5, 2, 6, 8);
-    const monumentMaterial = new THREE.MeshStandardMaterial({
-      color: 0x5bf5a3,
-      metalness: 0.4,
-      roughness: 0.6
+    // Main structure (building body) - varies by index
+    const structureHeight = 2 + (memoryIndex % 3) * 0.5; // Vary height
+    const structureWidth = 2.5;
+    const structureDepth = 2.5;
+    const structureGeometry = new THREE.BoxGeometry(
+      structureWidth,
+      structureHeight,
+      structureDepth
+    );
+    const structureMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4a4a4a + (memoryIndex * 0x050505), // Slight color variation
+      roughness: 0.6,
+      metalness: 0.3
     });
-    const monument = new THREE.Mesh(monumentGeometry, monumentMaterial);
-    monument.position.y = 4;
-    monument.castShadow = true;
-    zone3Group.add(monument);
+    const structure = new THREE.Mesh(structureGeometry, structureMaterial);
+    structure.position.y = baseHeight + structureHeight / 2;
+    structure.castShadow = true;
+    structure.receiveShadow = true;
+    landmarkGroup.add(structure);
 
-    // Surrounding boxes (memories)
-    for (let i = 0; i < 6; i++) {
-      const memoryBoxGeometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
-      const memoryBoxMaterial = new THREE.MeshStandardMaterial({
-        color: 0xa3f55b,
-        metalness: 0.2,
-        roughness: 0.8
-      });
-      const memoryBox = new THREE.Mesh(memoryBoxGeometry, memoryBoxMaterial);
-      const angle = (i / 6) * Math.PI * 2;
-      memoryBox.position.set(
-        Math.cos(angle) * 4,
-        1.25,
-        Math.sin(angle) * 4
-      );
-      memoryBox.castShadow = true;
-      memoryBox.receiveShadow = true;
-      zone3Group.add(memoryBox);
-    }
-
-    this.scene.instance.add(zone3Group);
-  }
-
-  /**
-   * Zone 4: Ending / Future area
-   */
-  createZone4() {
-    const zone4Group = new THREE.Group();
-    zone4Group.position.set(0, 0, 120);
-
-    // Main structure - large platform
-    const endPlatformGeometry = new THREE.BoxGeometry(18, 2, 18);
-    const endPlatformMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe24ae2,
-      metalness: 0.4,
-      roughness: 0.6
+    // Billboard (placeholder for image)
+    const billboardWidth = 2;
+    const billboardHeight = 1.5;
+    const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
+    const billboardMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a2a2a,
+      roughness: 0.8,
+      metalness: 0.1,
+      side: THREE.DoubleSide
     });
-    const endPlatform = new THREE.Mesh(endPlatformGeometry, endPlatformMaterial);
-    endPlatform.position.y = 1;
-    endPlatform.castShadow = true;
-    endPlatform.receiveShadow = true;
-    zone4Group.add(endPlatform);
+    const billboard = new THREE.Mesh(billboardGeometry, billboardMaterial);
+    billboard.position.set(
+      0,
+      baseHeight + structureHeight + billboardHeight / 2 + 0.2,
+      structureDepth / 2 + 0.1
+    );
+    billboard.rotation.y = side === 'left' ? -Math.PI / 4 : Math.PI / 4; // Face road
+    billboard.castShadow = true;
+    landmarkGroup.add(billboard);
 
-    // Future structure - tall box tower
-    const towerGeometry = new THREE.BoxGeometry(4, 8, 4);
-    const towerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xf55ba3,
-      metalness: 0.5,
-      roughness: 0.5
+    // Billboard frame
+    const frameThickness = 0.1;
+    const frameGeometry = new THREE.BoxGeometry(
+      billboardWidth + frameThickness * 2,
+      billboardHeight + frameThickness * 2,
+      frameThickness
+    );
+    const frameMaterial = new THREE.MeshStandardMaterial({
+      color: 0x666666,
+      roughness: 0.5,
+      metalness: 0.4
     });
-    const tower = new THREE.Mesh(towerGeometry, towerMaterial);
-    tower.position.y = 5;
-    tower.castShadow = true;
-    zone4Group.add(tower);
+    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+    frame.position.copy(billboard.position);
+    frame.position.z += 0.05;
+    frame.rotation.y = billboard.rotation.y;
+    frame.castShadow = true;
+    landmarkGroup.add(frame);
 
-    // Surrounding pillars
-    for (let i = 0; i < 8; i++) {
-      const pillarGeometry = new THREE.CylinderGeometry(0.8, 0.8, 5, 8);
-      const pillarMaterial = new THREE.MeshStandardMaterial({
-        color: 0xa35bf5,
-        metalness: 0.3,
-        roughness: 0.7
-      });
-      const pillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
-      const angle = (i / 8) * Math.PI * 2;
-      pillar.position.set(
-        Math.cos(angle) * 7,
-        3.5,
-        Math.sin(angle) * 7
-      );
-      pillar.castShadow = true;
-      zone4Group.add(pillar);
-    }
+    // Title/Sign (placeholder)
+    const signWidth = 1.5;
+    const signHeight = 0.3;
+    const signGeometry = new THREE.PlaneGeometry(signWidth, signHeight);
+    const signMaterial = new THREE.MeshStandardMaterial({
+      color: 0x555555,
+      roughness: 0.7,
+      metalness: 0.2,
+      side: THREE.DoubleSide
+    });
+    const sign = new THREE.Mesh(signGeometry, signMaterial);
+    sign.position.set(
+      0,
+      baseHeight + structureHeight + billboardHeight + 0.5,
+      structureDepth / 2 + 0.1
+    );
+    sign.rotation.y = billboard.rotation.y;
+    sign.castShadow = true;
+    landmarkGroup.add(sign);
 
-    this.scene.instance.add(zone4Group);
+    // Sign support pole
+    const poleGeometry = new THREE.CylinderGeometry(0.05, 0.05, signHeight, 8);
+    const poleMaterial = new THREE.MeshStandardMaterial({
+      color: 0x444444,
+      roughness: 0.6,
+      metalness: 0.3
+    });
+    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+    pole.position.set(
+      0,
+      baseHeight + structureHeight + billboardHeight + signHeight / 2 + 0.2,
+      structureDepth / 2 + 0.1
+    );
+    pole.rotation.z = Math.PI / 2;
+    pole.castShadow = true;
+    landmarkGroup.add(pole);
+
+    this.scene.instance.add(landmarkGroup);
   }
 }
+
