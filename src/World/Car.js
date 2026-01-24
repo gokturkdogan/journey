@@ -22,7 +22,7 @@ export default class Car {
     this.brakingForce = 20; // m/s²
     this.steeringAngle = 0.3; // radians
     this.steeringSpeed = 2; // radians per second
-    this.steeringTorque = 50; // Angular force for steering
+    this.steeringTorque = 100; // Angular force for steering (increased for better responsiveness)
     this.colliderOffset = 0.1; // Lift collider slightly above ground
 
     // Current state
@@ -214,9 +214,11 @@ export default class Car {
     }
 
     // Lock rotation to Y axis only (prevent pitch and roll)
+    // IMPORTANT: Only lock X and Z, Y (yaw) must remain free for steering
     const angularVelocity = this.body.angularVelocity;
     angularVelocity.x = 0; // Lock pitch rotation
     angularVelocity.z = 0; // Lock roll rotation
+    // DO NOT lock angularVelocity.y - this is needed for steering!
     this.body.angularVelocity = angularVelocity;
 
     // Get car's forward direction in world space (local Z+)
@@ -226,43 +228,26 @@ export default class Car {
     // Calculate current speed in forward direction
     this.currentSpeed = forward.dot(velocity);
 
-    // Handle steering (yaw rotation around Y axis)
+    // STEERING: Apply yaw rotation DIRECTLY to car physics body
+    // A = rotate left (positive Y torque), D = rotate right (negative Y torque)
+    // Applied ONLY to car.body - NEVER to camera, scene, or world
     if (this.keys.left) {
-      this.currentSteering = Math.min(
-        this.currentSteering + this.steeringSpeed * deltaTime,
-        this.steeringAngle
-      );
+      // A key: rotate car left (positive Y torque on car body)
+      const leftTorque = this.steeringTorque;
+      this.body.applyTorque(new CANNON.Vec3(0, leftTorque, 0));
     } else if (this.keys.right) {
-      this.currentSteering = Math.max(
-        this.currentSteering - this.steeringSpeed * deltaTime,
-        -this.steeringAngle
-      );
+      // D key: rotate car right (negative Y torque on car body)
+      const rightTorque = -this.steeringTorque;
+      this.body.applyTorque(new CANNON.Vec3(0, rightTorque, 0));
     } else {
-      // Return steering to center
-      if (this.currentSteering > 0) {
-        this.currentSteering = Math.max(
-          this.currentSteering - this.steeringSpeed * deltaTime,
-          0
-        );
-      } else if (this.currentSteering < 0) {
-        this.currentSteering = Math.min(
-          this.currentSteering + this.steeringSpeed * deltaTime,
-          0
-        );
-      }
-    }
-
-    // Apply steering torque (yaw rotation around Y axis) - only when moving
-    if (Math.abs(this.currentSpeed) > 0.1) {
-      const steeringTorque = this.currentSteering * this.steeringTorque * Math.abs(this.currentSpeed);
-      // Apply torque around world Y axis (same as local Y for yaw-only rotation)
-      this.body.applyTorque(new CANNON.Vec3(0, steeringTorque, 0));
-    } else {
-      // When not moving, damp any angular velocity to prevent unwanted rotation
+      // No steering input: damp angular velocity Y only
       const angularVel = this.body.angularVelocity;
-      angularVel.y *= 0.8; // Damp yaw rotation when stopped
+      angularVel.y *= 0.9; // Gentle damping when no steering input
       this.body.angularVelocity = angularVel;
     }
+
+    // Check if any movement input is active
+    const hasInput = this.keys.forward || this.keys.backward;
 
     // Handle acceleration/braking (force along local Z axis)
     if (this.keys.forward) {
@@ -289,44 +274,60 @@ export default class Car {
         const force = new CANNON.Vec3(0, 0, -this.brakingForce * this.mass);
         this.body.applyLocalForce(force, new CANNON.Vec3(0, 0, 0));
       }
-    } else {
-      // Apply moderate braking when no input (natural deceleration)
-      const brakeForce = new CANNON.Vec3(0, 0, -this.brakingForce * 0.5 * this.mass);
-      this.body.applyLocalForce(brakeForce, new CANNON.Vec3(0, 0, 0));
+    }
+
+    // Strict idle stabilization when no input
+    if (!hasInput) {
+      // Get local velocity
+      const localVelocity = new CANNON.Vec3();
+      const invQuat = this.body.quaternion.inverse();
+      invQuat.vmult(velocity, localVelocity);
       
-      // When speed is very low, apply additional damping to ensure complete stop
-      if (Math.abs(this.currentSpeed) < 0.2) {
-        // Get local velocity
-        const localVelocity = new CANNON.Vec3();
-        const invQuat = this.body.quaternion.inverse();
-        invQuat.vmult(velocity, localVelocity);
-        
-        // Strongly damp forward/backward and lateral movement
-        localVelocity.x *= 0.8; // Damp lateral movement
-        localVelocity.z *= 0.8; // Damp forward/backward movement
-        
-        // Convert back to world space
-        const worldVelocity = new CANNON.Vec3();
-        this.body.quaternion.vmult(localVelocity, worldVelocity);
-        worldVelocity.y = 0; // Keep Y locked
-        this.body.velocity = worldVelocity;
+      // Aggressively damp all horizontal velocity toward zero
+      const dampingFactor = 0.85; // Strong damping (15% reduction per frame)
+      localVelocity.x *= dampingFactor;
+      localVelocity.z *= dampingFactor;
+      
+      // Clamp very small velocities to zero (prevent micro-movements)
+      const velocityThreshold = 0.05; // m/s
+      if (Math.abs(localVelocity.x) < velocityThreshold) {
+        localVelocity.x = 0;
       }
+      if (Math.abs(localVelocity.z) < velocityThreshold) {
+        localVelocity.z = 0;
+      }
+      
+      // Convert back to world space
+      const worldVelocity = new CANNON.Vec3();
+      this.body.quaternion.vmult(localVelocity, worldVelocity);
+      worldVelocity.y = 0; // Keep Y locked
+      this.body.velocity = worldVelocity;
+      
+      // Temporarily increase linear damping when idle for extra stability
+      this.body.linearDamping = 0.8; // High damping when idle
+    } else {
+      // Restore normal damping when input is active
+      this.body.linearDamping = 0.3;
     }
 
     // Speed limiting is now handled in forward/backward sections above
     // This ensures forces are always applied to overcome static friction
 
     // Sync mesh with physics body (perfect alignment)
+    // This ensures the car mesh and its arrow helper rotate with the physics body
     this.mesh.position.set(
       this.body.position.x,
       this.body.position.y,
       this.body.position.z
     );
+    // CRITICAL: Sync quaternion from physics body to mesh
+    // This makes the car visually rotate when steering is applied
     this.mesh.quaternion.set(
       this.body.quaternion.x,
       this.body.quaternion.y,
       this.body.quaternion.z,
       this.body.quaternion.w
     );
+    // Arrow helper is a child of mesh, so it rotates automatically
   }
 }

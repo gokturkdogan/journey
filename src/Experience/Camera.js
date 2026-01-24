@@ -36,8 +36,19 @@ export default class Camera {
 
   /**
    * Update camera to follow car smoothly
+   * TEMPORARILY DISABLED FOR DEBUGGING - Camera is locked to fixed position
    */
   update() {
+    // DEBUGGING MODE: Fixed camera position
+    // Camera is locked to verify car rotation visually
+    // When A/D is pressed, only the car should rotate, not the camera
+    
+    // Fixed camera position (looking down at car from above and behind)
+    this.instance.position.set(0, 8, 10); // Fixed world position
+    this.instance.lookAt(0, 1, 0); // Look at origin (where car starts)
+    
+    // Original follow logic disabled for debugging:
+    /*
     // Wait for car to be initialized
     if (!this.experience.car) return;
 
@@ -75,6 +86,7 @@ export default class Camera {
 
     // Smooth lookAt (prevents sudden jumps)
     this.instance.lookAt(lookAtTarget);
+    */
   }
 
   /**
