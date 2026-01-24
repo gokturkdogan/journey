@@ -18,6 +18,17 @@ export default class World {
     this.createRoad();
     this.createRoadEdges();
     this.createMemoryLandmarks();
+
+    // Proximity feedback settings
+    this.proximityRadius = 15; // Detection radius
+    this.currentHighlightedLandmark = null; // Only one highlighted at a time
+    this.highlightIntensity = 0; // Current highlight intensity (0-1)
+    this.highlightSpeed = 0.05; // Lerp speed for smooth transitions
+
+    // Listen for updates to check proximity
+    this.experience.time.on('tick', () => {
+      this.update();
+    });
   }
 
   /**
@@ -134,8 +145,12 @@ export default class World {
       { z: 440, side: 'right' }, // Memory 12
     ];
 
+    // Store landmark references for proximity detection
+    this.memoryLandmarks = [];
+    
     landmarkPositions.forEach((pos, index) => {
-      this.createMemoryLandmark(pos.z, pos.side, index + 1);
+      const landmark = this.createMemoryLandmark(pos.z, pos.side, index + 1);
+      this.memoryLandmarks.push(landmark);
     });
   }
 
@@ -187,7 +202,9 @@ export default class World {
     const structureMaterial = new THREE.MeshStandardMaterial({
       color: buildingColors[memoryIndex % buildingColors.length], // Neutral readable colors
       roughness: 0.6,
-      metalness: 0.3
+      metalness: 0.3,
+      emissive: 0x000000, // Start with no emissive
+      emissiveIntensity: 0
     });
     const structure = new THREE.Mesh(structureGeometry, structureMaterial);
     structure.position.y = baseHeight + structureHeight / 2;
@@ -203,7 +220,9 @@ export default class World {
       color: 0x8a8a8a, // Lighter color for contrast (billboard placeholder)
       roughness: 0.8,
       metalness: 0.1,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
+      emissive: 0x000000, // Start with no emissive
+      emissiveIntensity: 0
     });
     const billboard = new THREE.Mesh(billboardGeometry, billboardMaterial);
     billboard.position.set(
@@ -272,6 +291,112 @@ export default class World {
     landmarkGroup.add(pole);
 
     this.scene.instance.add(landmarkGroup);
+
+    // Store original states for smooth transitions
+    const landmarkData = {
+      group: landmarkGroup,
+      structure: structure,
+      structureMaterial: structureMaterial,
+      billboard: billboard,
+      billboardMaterial: billboardMaterial,
+      position: new THREE.Vector3(sideOffset, 0, zPosition),
+      originalScale: 1,
+      originalEmissive: new THREE.Color(0x000000),
+      originalColor: structureMaterial.color.clone(),
+      billboardOriginalColor: billboardMaterial.color.clone(),
+      highlightIntensity: 0
+    };
+
+    return landmarkData;
+  }
+
+  /**
+   * Update proximity detection and highlight effects
+   */
+  update() {
+    // Wait for car to be initialized
+    if (!this.experience.car) return;
+
+    const car = this.experience.car;
+    const carPosition = new THREE.Vector3(
+      car.body.position.x,
+      car.body.position.y,
+      car.body.position.z
+    );
+
+    // Find closest memory landmark
+    let closestLandmark = null;
+    let closestDistance = Infinity;
+
+    this.memoryLandmarks.forEach((landmark) => {
+      const distance = carPosition.distanceTo(landmark.position);
+      
+      if (distance < this.proximityRadius && distance < closestDistance) {
+        closestDistance = distance;
+        closestLandmark = landmark;
+      }
+    });
+
+    // Update highlight state
+    if (closestLandmark !== this.currentHighlightedLandmark) {
+      // Reset previous highlight
+      if (this.currentHighlightedLandmark) {
+        this.currentHighlightedLandmark.highlightIntensity = 0;
+      }
+      
+      // Set new highlight
+      this.currentHighlightedLandmark = closestLandmark;
+    }
+
+    // Update all landmarks with smooth transitions
+    this.memoryLandmarks.forEach((landmark) => {
+      const isHighlighted = landmark === this.currentHighlightedLandmark;
+      
+      // Smoothly transition highlight intensity
+      if (isHighlighted) {
+        landmark.highlightIntensity = Math.min(
+          1,
+          landmark.highlightIntensity + this.highlightSpeed
+        );
+      } else {
+        landmark.highlightIntensity = Math.max(
+          0,
+          landmark.highlightIntensity - this.highlightSpeed
+        );
+      }
+
+      // Apply visual effects based on highlight intensity
+      const intensity = landmark.highlightIntensity;
+      
+      // Scale effect (slight scale up)
+      const targetScale = 1 + intensity * 0.1; // 10% scale increase at max
+      landmark.group.scale.lerp(
+        new THREE.Vector3(targetScale, targetScale, targetScale),
+        0.1
+      );
+
+      // Emissive color effect (soft glow)
+      const emissiveIntensity = intensity * 0.5; // Max 50% emissive
+      const emissiveColor = new THREE.Color(0xffffff);
+      emissiveColor.multiplyScalar(emissiveIntensity);
+      landmark.structureMaterial.emissive.lerp(emissiveColor, 0.1);
+      landmark.structureMaterial.emissiveIntensity = emissiveIntensity;
+
+      // Brightness/color boost
+      const colorBoost = new THREE.Color(landmark.originalColor);
+      colorBoost.lerp(new THREE.Color(0xffffff), intensity * 0.3); // 30% brighter at max
+      landmark.structureMaterial.color.lerp(colorBoost, 0.1);
+
+      // Billboard glow effect
+      const billboardGlow = new THREE.Color(landmark.billboardOriginalColor);
+      billboardGlow.lerp(new THREE.Color(0xaaaaaa), intensity * 0.4); // Lighter at max
+      landmark.billboardMaterial.color.lerp(billboardGlow, 0.1);
+      landmark.billboardMaterial.emissive.lerp(
+        new THREE.Color(0xffffff).multiplyScalar(intensity * 0.3),
+        0.1
+      );
+      landmark.billboardMaterial.emissiveIntensity = intensity * 0.3;
+    });
   }
 }
 
