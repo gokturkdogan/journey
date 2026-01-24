@@ -41,6 +41,7 @@ export default class Experience {
    * Update method called on each frame
    */
   update() {
+    this.camera.update();
     this.renderer.update();
   }
 
