@@ -2,6 +2,8 @@ import Scene from './Scene.js';
 import Camera from './Camera.js';
 import Renderer from './Renderer.js';
 import Time from './Time.js';
+import PhysicsWorld from './PhysicsWorld.js';
+import Car from '../World/Car.js';
 
 /**
  * Experience - Singleton class that orchestrates the Three.js application
@@ -24,6 +26,10 @@ export default class Experience {
     this.scene = new Scene();
     this.camera = new Camera(this);
     this.renderer = new Renderer(this);
+    this.physicsWorld = new PhysicsWorld(this);
+
+    // Initialize world objects
+    this.car = new Car(this);
 
     // Start the render loop
     this.time.on('tick', () => {
@@ -35,6 +41,7 @@ export default class Experience {
    * Update method called on each frame
    */
   update() {
+    this.camera.update();
     this.renderer.update();
   }
 
