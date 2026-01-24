@@ -13,6 +13,9 @@ export default class World {
     this.roadWidth = 10; // Road width
     this.groundWidth = 30; // Ground extends beyond road
 
+    // Texture loader for cover images
+    this.textureLoader = new THREE.TextureLoader();
+
     // Create world elements
     this.createGround();
     this.createRoad();
@@ -209,7 +212,29 @@ export default class World {
     memoryGroup.userData.isMemory = true;
     memoryGroup.userData.memoryId = memory.id;
 
-    // 1) Building (main structure)
+    // Yerleşim offset değerleri (X ekseni boyunca)
+    const OFFSET_DATE_SIGN = 0;
+    const OFFSET_BUILDING = 2;
+    const OFFSET_TITLE_SIGN = 4;
+    const OFFSET_BILLBOARD = 7;
+
+    // 1) Date sign (küçük sokak tabelası - MEMORY TARİHİ)
+    const dateSignWidth = 1.5;
+    const dateSignHeight = 0.4;
+    const dateSignGeometry = new THREE.PlaneGeometry(dateSignWidth, dateSignHeight);
+    const dateTexture = this.createTextTexture(memory.date, 16, '#f0f0f0', '#333333');
+    const dateSignMaterial = new THREE.MeshStandardMaterial({
+      map: dateTexture,
+      side: THREE.DoubleSide
+    });
+    const dateSignMesh = new THREE.Mesh(dateSignGeometry, dateSignMaterial);
+    dateSignMesh.name = 'dateSignMesh';
+    dateSignMesh.position.set(OFFSET_DATE_SIGN, dateSignHeight / 2, 0);
+    dateSignMesh.rotation.y = Math.PI;
+    dateSignMesh.castShadow = true;
+    memoryGroup.add(dateSignMesh);
+
+    // 2) Building (ana yapı - EV / BİNA)
     const buildingWidth = 3;
     const buildingHeight = 4;
     const buildingDepth = 3;
@@ -221,12 +246,12 @@ export default class World {
     });
     const buildingMesh = new THREE.Mesh(buildingGeometry, buildingMaterial);
     buildingMesh.name = 'buildingMesh';
-    buildingMesh.position.y = buildingHeight / 2;
+    buildingMesh.position.set(OFFSET_BUILDING, buildingHeight / 2, 0);
     buildingMesh.castShadow = true;
     buildingMesh.receiveShadow = true;
     memoryGroup.add(buildingMesh);
 
-    // 2) Title sign (memory title)
+    // 3) Title sign (sokak tabelası - MEMORY İSMİ)
     const titleSignWidth = 2.5;
     const titleSignHeight = 0.8;
     const titleSignGeometry = new THREE.PlaneGeometry(titleSignWidth, titleSignHeight);
@@ -237,41 +262,48 @@ export default class World {
     });
     const titleSignMesh = new THREE.Mesh(titleSignGeometry, titleSignMaterial);
     titleSignMesh.name = 'titleSignMesh';
-    titleSignMesh.position.set(0, buildingHeight + titleSignHeight / 2 + 0.3, buildingDepth / 2 + 0.1);
+    titleSignMesh.position.set(OFFSET_TITLE_SIGN, titleSignHeight / 2, 0);
     titleSignMesh.rotation.y = Math.PI;
     titleSignMesh.castShadow = true;
     memoryGroup.add(titleSignMesh);
 
-    // 3) Billboard (cover image placeholder)
-    const billboardWidth = 2.5;
-    const billboardHeight = 2;
-    const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
-    const billboardMaterial = new THREE.MeshStandardMaterial({
-      color: 0x8a8a8a,
+    // 4) Billboard (reklam billboard'u - KAPAK FOTOĞRAFI)
+    const baseBillboardWidth = 2.5;
+    const baseBillboardHeight = 2;
+    const billboardGeometry = new THREE.PlaneGeometry(baseBillboardWidth, baseBillboardHeight);
+    const billboardMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
       side: THREE.DoubleSide
     });
     const billboardMesh = new THREE.Mesh(billboardGeometry, billboardMaterial);
     billboardMesh.name = 'billboardMesh';
-    billboardMesh.position.set(buildingWidth / 2 + billboardWidth / 2 + 0.5, buildingHeight / 2, 0);
-    billboardMesh.rotation.y = -Math.PI / 2;
+    billboardMesh.position.set(OFFSET_BILLBOARD, 1.5, 0);
+    billboardMesh.rotation.y = Math.PI;
     billboardMesh.castShadow = true;
     memoryGroup.add(billboardMesh);
 
-    // 4) Date sign (smaller)
-    const dateSignWidth = 1.5;
-    const dateSignHeight = 0.4;
-    const dateSignGeometry = new THREE.PlaneGeometry(dateSignWidth, dateSignHeight);
-    const dateTexture = this.createTextTexture(memory.date, 16, '#f0f0f0', '#333333');
-    const dateSignMaterial = new THREE.MeshStandardMaterial({
-      map: dateTexture,
-      side: THREE.DoubleSide
-    });
-    const dateSignMesh = new THREE.Mesh(dateSignGeometry, dateSignMaterial);
-    dateSignMesh.name = 'dateSignMesh';
-    dateSignMesh.position.set(0, buildingHeight + dateSignHeight / 2 + 1.2, buildingDepth / 2 + 0.1);
-    dateSignMesh.rotation.y = Math.PI;
-    dateSignMesh.castShadow = true;
-    memoryGroup.add(dateSignMesh);
+    const imagePath = memory.coverImage.startsWith('/') 
+      ? memory.coverImage 
+      : new URL(`../assets/images/${memory.coverImage}`, import.meta.url).href;
+    
+    const coverTexture = this.textureLoader.load(
+      imagePath,
+      (texture) => {
+        const image = texture.image;
+        const aspectRatio = image.width / image.height;
+        const targetHeight = 2;
+        const targetWidth = targetHeight * aspectRatio;
+        billboardMesh.scale.set(targetWidth / baseBillboardWidth, targetHeight / baseBillboardHeight, 1);
+        billboardMaterial.map = texture;
+        billboardMaterial.needsUpdate = true;
+      },
+      undefined,
+      (error) => {
+        console.warn(`Cover image yüklenemedi: ${memory.coverImage}`, error);
+      }
+    );
+
+    memoryGroup.rotation.y = Math.PI / 2 + Math.PI;
 
     this.scene.instance.add(memoryGroup);
     return memoryGroup;
@@ -303,6 +335,8 @@ export default class World {
     buildingMesh.castShadow = true;
     buildingMesh.receiveShadow = true;
     decorativeGroup.add(buildingMesh);
+
+    decorativeGroup.rotation.y = Math.PI / 2 + Math.PI;
 
     this.scene.instance.add(decorativeGroup);
   }

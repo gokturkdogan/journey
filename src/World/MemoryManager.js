@@ -14,7 +14,7 @@ export default class MemoryManager {
         title: 'Early Days',
         description: 'The beginning of a beautiful journey, filled with wonder and discovery.',
         date: '2010-05-15',
-        coverImage: '/images/memory1/cover.jpg',
+        coverImage: 'memory1-cover.jpg.jpg',
         gallery: [
           '/images/memory1/1.jpg',
           '/images/memory1/2.jpg',
@@ -30,7 +30,7 @@ export default class MemoryManager {
         title: 'First Steps',
         description: 'Taking the first steps into a new world, learning and growing with each moment.',
         date: '2012-08-22',
-        coverImage: '/images/memory2/cover.jpg',
+        coverImage: 'memory2-cover.jpg',
         gallery: [
           '/images/memory2/1.jpg',
           '/images/memory2/2.jpg',
