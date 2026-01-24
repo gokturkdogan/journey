@@ -4,6 +4,7 @@ import Renderer from './Renderer.js';
 import Time from './Time.js';
 import PhysicsWorld from './PhysicsWorld.js';
 import Car from '../World/Car.js';
+import World from '../World/World.js';
 
 /**
  * Experience - Singleton class that orchestrates the Three.js application
@@ -29,6 +30,7 @@ export default class Experience {
     this.physicsWorld = new PhysicsWorld(this);
 
     // Initialize world objects
+    this.world = new World(this);
     this.car = new Car(this);
 
     // Start the render loop
