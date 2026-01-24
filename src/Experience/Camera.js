@@ -20,13 +20,14 @@ export default class Camera {
     );
 
     // Camera follow settings
-    this.followDistance = 8; // Distance behind car
-    this.followHeight = 3; // Height above ground
+    this.followDistance = 12; // Distance from car (increased for overview)
+    this.followHeight = 5; // Height above ground (increased for elevation)
     this.rigSmoothness = 0.1; // Lerp factor for CameraRig position (lower = smoother)
 
     // Mouse orbit control settings
-    this.orbitYaw = 0; // Horizontal rotation (Y axis)
-    this.orbitPitch = 0.3; // Vertical rotation (X axis) - start slightly above
+    // Initial cinematic overview: left side, elevated, diagonal angle
+    this.orbitYaw = -Math.PI / 4; // Horizontal rotation - left side of car (45 degrees)
+    this.orbitPitch = Math.PI / 6; // Vertical rotation - elevated angle (30 degrees up)
     this.orbitSensitivity = 0.003; // Mouse sensitivity
     this.pitchMin = -Math.PI / 3; // Limit looking down (60 degrees)
     this.pitchMax = Math.PI / 3; // Limit looking up (60 degrees)
@@ -44,11 +45,13 @@ export default class Camera {
     // Add camera to rig (camera is child of rig, not car)
     this.rig.add(this.instance);
 
-    // Set camera offset (behind and above the rig position)
-    this.instance.position.set(0, this.followHeight, this.followDistance);
+    // Set camera offset (will be adjusted by orbit angles)
+    // Initial offset is neutral, orbit angles will position it
+    this.instance.position.set(0, 0, 0);
 
     // Current rig position (for smooth interpolation)
-    this.currentRigPosition = new THREE.Vector3(0, 0, 0);
+    // Initialize to a cinematic overview position (left, elevated)
+    this.currentRigPosition = new THREE.Vector3(-5, 5, 5);
 
     // Setup mouse controls
     this.setupMouseControls();
@@ -126,19 +129,28 @@ export default class Camera {
     const z = orbitDistance * Math.cos(this.orbitPitch) * Math.cos(this.orbitYaw);
 
     // Calculate target rig position (orbiting around car)
+    // Positioned to the left, elevated, at diagonal angle
     const targetRigPosition = new THREE.Vector3();
     targetRigPosition.copy(carPosition);
     targetRigPosition.x += x;
     targetRigPosition.y += this.followHeight + y; // Add pitch offset and base height
     targetRigPosition.z += z;
+    
+    // Ensure camera doesn't clip through ground (minimum height)
+    const minHeight = 2;
+    if (targetRigPosition.y < minHeight) {
+      targetRigPosition.y = minHeight;
+    }
 
     // Smoothly interpolate rig position (lerp for cinematic lag)
     this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);
     this.rig.position.copy(this.currentRigPosition);
 
-    // Camera always looks at the car
+    // Camera looks at the car and timeline road
+    // Look slightly ahead along the road for better overview
     const lookAtTarget = new THREE.Vector3();
     lookAtTarget.copy(carPosition);
+    lookAtTarget.z += 10; // Look ahead along the timeline road
     lookAtTarget.y += 0.5; // Look slightly above car center
     this.instance.lookAt(lookAtTarget);
   }

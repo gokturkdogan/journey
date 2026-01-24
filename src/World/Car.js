@@ -107,11 +107,11 @@ export default class Car {
       this.width
     );
 
-    // Create material
+    // Create material - distinct bright color
     const material = new THREE.MeshStandardMaterial({
-      color: 0x3366ff,
-      metalness: 0.7,
-      roughness: 0.3
+      color: 0xff3366, // Bright red/pink for visibility
+      metalness: 0.5,
+      roughness: 0.4
     });
 
     // Create mesh

@@ -30,7 +30,7 @@ export default class World {
       this.timelineLength
     );
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: 0x0f0f0f,
+      color: 0x2a2a3a, // Slightly lighter gray with muted blue tint
       roughness: 0.9,
       metalness: 0.0
     });
@@ -51,7 +51,7 @@ export default class World {
       this.timelineLength
     );
     const roadMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2a2a,
+      color: 0x1a1a1a, // Dark gray road
       roughness: 0.6,
       metalness: 0.1
     });
@@ -156,7 +156,7 @@ export default class World {
     const baseHeight = 1;
     const baseGeometry = new THREE.BoxGeometry(baseWidth, baseHeight, baseDepth);
     const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x3a3a3a,
+      color: 0x5a5a5a, // Neutral gray base
       roughness: 0.7,
       metalness: 0.2
     });
@@ -175,8 +175,17 @@ export default class World {
       structureHeight,
       structureDepth
     );
+    // Neutral but readable building colors
+    const buildingColors = [
+      0x6a6a6a, // Light gray
+      0x7a7a7a, // Medium gray
+      0x6a7a6a, // Slight green-gray
+      0x7a6a7a, // Slight purple-gray
+      0x6a6a7a, // Slight blue-gray
+      0x7a7a6a, // Slight yellow-gray
+    ];
     const structureMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4a4a4a + (memoryIndex * 0x050505), // Slight color variation
+      color: buildingColors[memoryIndex % buildingColors.length], // Neutral readable colors
       roughness: 0.6,
       metalness: 0.3
     });
@@ -191,7 +200,7 @@ export default class World {
     const billboardHeight = 1.5;
     const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
     const billboardMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2a2a,
+      color: 0x8a8a8a, // Lighter color for contrast (billboard placeholder)
       roughness: 0.8,
       metalness: 0.1,
       side: THREE.DoubleSide
