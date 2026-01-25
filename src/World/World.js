@@ -28,6 +28,27 @@ export default class World {
     this.highlightIntensity = 0; // Current highlight intensity (0-1)
     this.highlightSpeed = 0.05; // Lerp speed for smooth transitions
 
+    // Memory detail view state
+    this.activeDetailView = null;
+    this.detailViewGroup = null;
+    this.galleryBillboard = null;
+    this.galleryCurrentIndex = 0;
+    this.openButton = null;
+    this.closeButton = null;
+    this.prevButton = null;
+    this.nextButton = null;
+    this.hiddenObjects = [];
+    this.detailOpen = false;
+    this.detailTransitionProgress = 0;
+    this.detailStartPos = new THREE.Vector3();
+    this.detailEndPos = new THREE.Vector3();
+    this.detailLerpSpeed = 0.08;
+
+    // Raycaster for UI interactions
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+    this.setupRaycaster();
+
     // Listen for updates to check proximity
     this.experience.time.on('tick', () => {
       this.update();
@@ -140,12 +161,11 @@ export default class World {
     
     // Left side X position for real memories
     const leftSideX = -6;
-    // Right side X position for decorative objects
-    const rightSideX = 6;
     
     memories.forEach((memory) => {
       // Create REAL memory on left side (X < 0)
       const memoryGroup = this.createMemoryPrefab(memory, leftSideX);
+      const openButton = this.createOpenButton(memoryGroup, memory);
       const memoryLandmark = {
         group: memoryGroup,
         structure: memoryGroup.getObjectByName('buildingMesh'),
@@ -156,12 +176,10 @@ export default class World {
         originalColor: memoryGroup.getObjectByName('buildingMesh').material.color.clone(),
         highlightIntensity: 0,
         memoryId: memory.id,
-        isMemory: true
+        isMemory: true,
+        openButton: openButton
       };
       this.memoryLandmarks.push(memoryLandmark);
-      
-      // Create DECORATIVE copy on right side (X > 0)
-      this.createDecorativeCopy(memory, rightSideX);
     });
   }
 
@@ -214,9 +232,9 @@ export default class World {
 
     // Yerleşim offset değerleri (X ekseni boyunca)
     const OFFSET_DATE_SIGN = 0;
-    const OFFSET_BUILDING = 2;
-    const OFFSET_TITLE_SIGN = 4;
-    const OFFSET_BILLBOARD = 7;
+    const OFFSET_BUILDING = 3;
+    const OFFSET_TITLE_SIGN = 7;
+    const OFFSET_BILLBOARD = 11;
 
     // 1) Date sign (küçük sokak tabelası - MEMORY TARİHİ)
     const dateSignWidth = 1.5;
@@ -291,7 +309,7 @@ export default class World {
       (texture) => {
         const image = texture.image;
         const aspectRatio = image.width / image.height;
-        const targetHeight = 2;
+        const targetHeight = 4;
         const targetWidth = targetHeight * aspectRatio;
         billboardMesh.scale.set(targetWidth / baseBillboardWidth, targetHeight / baseBillboardHeight, 1);
         billboardMaterial.map = texture;
@@ -342,6 +360,242 @@ export default class World {
   }
 
   /**
+   * Setup raycaster for UI interactions
+   */
+  setupRaycaster() {
+    window.addEventListener('click', (event) => {
+      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      this.raycaster.setFromCamera(this.mouse, this.experience.camera.instance);
+      const intersects = this.raycaster.intersectObjects(this.scene.instance.children, true);
+
+      if (intersects.length > 0) {
+        const object = intersects[0].object;
+        if (object.userData.isOpenButton) {
+          this.openDetailView(object.userData.memoryId);
+        } else if (object.userData.isCloseButton) {
+          this.closeDetailView();
+        } else if (object.userData.isPrevButton) {
+          this.prevGalleryImage();
+        } else if (object.userData.isNextButton) {
+          this.nextGalleryImage();
+        }
+      }
+    });
+  }
+
+  /**
+   * Create open detail button
+   */
+  createOpenButton(memoryGroup, memory) {
+    const buttonGeometry = new THREE.PlaneGeometry(1, 1);
+    const buttonMaterial = new THREE.MeshBasicMaterial({
+      color: 0x4a90e2,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide
+    });
+    const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+    button.name = 'openButton';
+    button.position.set(2, 5, 0);
+    button.userData.isOpenButton = true;
+    button.userData.memoryId = memory.id;
+    button.visible = false;
+    memoryGroup.add(button);
+    return button;
+  }
+
+  /**
+   * Open detail view
+   */
+  openDetailView(memoryId) {
+    const memory = this.experience.memoryManager.getMemoryById(memoryId);
+    if (!memory || !memory.gallery || memory.gallery.length === 0) return;
+
+    const landmark = this.memoryLandmarks.find(l => l.memoryId === memoryId);
+    if (!landmark) return;
+
+    this.activeDetailView = memoryId;
+    this.galleryCurrentIndex = 0;
+    this.hiddenObjects = [];
+
+    this.memoryLandmarks.forEach((l) => {
+      if (l.openButton) {
+        l.openButton.visible = false;
+      }
+    });
+
+    this.scene.instance.traverse((object) => {
+      if (object.type === 'Mesh' || object.type === 'Group') {
+        if (object.userData.isMemory || object.userData.isDecorative || 
+            object.name.includes('ground') || object.name.includes('road') ||
+            object.name.includes('edge') || object.name.includes('line')) {
+          if (object.visible) {
+            this.hiddenObjects.push(object);
+            object.visible = false;
+          }
+        }
+      }
+    });
+
+    const buildingMesh = landmark.group.getObjectByName('buildingMesh');
+    const buildingWorldPos = new THREE.Vector3();
+    if (buildingMesh) {
+      buildingMesh.getWorldPosition(buildingWorldPos);
+    } else {
+      buildingWorldPos.copy(landmark.position);
+      buildingWorldPos.y = 2;
+    }
+
+    this.detailStartPos.copy(buildingWorldPos);
+    this.detailStartPos.y = 3;
+    this.detailEndPos.copy(buildingWorldPos);
+    this.detailEndPos.y = 3;
+
+    this.detailViewGroup = new THREE.Group();
+    this.detailViewGroup.position.copy(this.detailStartPos);
+    this.detailTransitionProgress = 0;
+    this.detailOpen = true;
+
+    const galleryWidth = 12;
+    const galleryHeight = 8;
+    const galleryGeometry = new THREE.PlaneGeometry(galleryWidth, galleryHeight);
+    const galleryMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+    this.galleryBillboard = new THREE.Mesh(galleryGeometry, galleryMaterial);
+    this.galleryBillboard.rotation.y = Math.PI / 2;
+    this.detailViewGroup.add(this.galleryBillboard);
+
+    this.loadGalleryImage(memory.gallery[0]);
+
+    const buttonSize = 0.8;
+    const buttonMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide
+    });
+
+    this.closeButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.closeButton.position.set(galleryWidth / 2 + 0.8, galleryHeight / 2 + 0.8, 0.1);
+    this.closeButton.userData.isCloseButton = true;
+    this.galleryBillboard.add(this.closeButton);
+
+    this.prevButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.prevButton.position.set(-galleryWidth / 2 - 0.8, -galleryHeight / 3 + 0.5, 0.1);
+    this.prevButton.userData.isPrevButton = true;
+    this.galleryBillboard.add(this.prevButton);
+
+    this.nextButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.nextButton.position.set(galleryWidth / 2 + 0.8, -galleryHeight / 3 + 0.5, 0.1);
+    this.nextButton.userData.isNextButton = true;
+    this.galleryBillboard.add(this.nextButton);
+
+    this.scene.instance.add(this.detailViewGroup);
+
+    if (this.experience.camera) {
+      this.experience.camera.targetYaw = 0;
+      this.experience.camera.targetPitch = 0;
+    }
+  }
+
+  /**
+   * Close detail view
+   */
+  closeDetailView() {
+    if (!this.activeDetailView) return;
+
+    this.detailOpen = false;
+
+    this.hiddenObjects.forEach((object) => {
+      object.visible = true;
+    });
+    this.hiddenObjects = [];
+
+    const landmark = this.memoryLandmarks.find(l => l.memoryId === this.activeDetailView);
+    if (landmark && landmark.openButton) {
+      landmark.openButton.visible = true;
+    }
+
+    if (this.detailViewGroup) {
+      this.scene.instance.remove(this.detailViewGroup);
+      this.detailViewGroup = null;
+    }
+
+    this.galleryBillboard = null;
+    this.closeButton = null;
+    this.prevButton = null;
+    this.nextButton = null;
+    this.activeDetailView = null;
+    this.galleryCurrentIndex = 0;
+    this.detailTransitionProgress = 0;
+
+    if (this.experience.camera) {
+      this.experience.camera.targetYaw = this.experience.camera.initialYaw;
+      this.experience.camera.targetPitch = this.experience.camera.initialPitch;
+    }
+  }
+
+  /**
+   * Load gallery image
+   */
+  loadGalleryImage(imagePath) {
+    if (!this.galleryBillboard) return;
+
+    const fullPath = imagePath.startsWith('/') 
+      ? imagePath 
+      : new URL(`../assets/images/${imagePath}`, import.meta.url).href;
+
+    this.textureLoader.load(
+      fullPath,
+      (texture) => {
+        this.galleryBillboard.material.map = texture;
+        this.galleryBillboard.material.needsUpdate = true;
+      },
+      undefined,
+      (error) => {
+        console.warn(`Gallery image yüklenemedi: ${imagePath}`, error);
+      }
+    );
+  }
+
+  /**
+   * Previous gallery image
+   */
+  prevGalleryImage() {
+    if (!this.activeDetailView) return;
+    const memory = this.experience.memoryManager.getMemoryById(this.activeDetailView);
+    if (!memory || !memory.gallery) return;
+
+    this.galleryCurrentIndex = (this.galleryCurrentIndex - 1 + memory.gallery.length) % memory.gallery.length;
+    this.loadGalleryImage(memory.gallery[this.galleryCurrentIndex]);
+  }
+
+  /**
+   * Next gallery image
+   */
+  nextGalleryImage() {
+    if (!this.activeDetailView) return;
+    const memory = this.experience.memoryManager.getMemoryById(this.activeDetailView);
+    if (!memory || !memory.gallery) return;
+
+    this.galleryCurrentIndex = (this.galleryCurrentIndex + 1) % memory.gallery.length;
+    this.loadGalleryImage(memory.gallery[this.galleryCurrentIndex]);
+  }
+
+  /**
    * Update proximity detection and highlight effects
    */
   update() {
@@ -373,6 +627,9 @@ export default class World {
       // Reset previous highlight
       if (this.currentHighlightedLandmark) {
         this.currentHighlightedLandmark.highlightIntensity = 0;
+        if (this.currentHighlightedLandmark.openButton) {
+          this.currentHighlightedLandmark.openButton.visible = false;
+        }
       }
       
       // Set new highlight
@@ -381,12 +638,27 @@ export default class World {
       // Update active memory in MemoryManager
       if (closestLandmark && closestLandmark.memoryId) {
         this.experience.memoryManager.setActiveMemory(closestLandmark.memoryId);
+        if (closestLandmark.openButton && !this.activeDetailView) {
+          closestLandmark.openButton.visible = true;
+        }
       }
     } else if (!closestLandmark && this.currentHighlightedLandmark) {
       // Car exited all memory zones
       this.currentHighlightedLandmark.highlightIntensity = 0;
+      if (this.currentHighlightedLandmark.openButton) {
+        this.currentHighlightedLandmark.openButton.visible = false;
+      }
       this.currentHighlightedLandmark = null;
       this.experience.memoryManager.clearActiveMemory();
+    }
+
+    // Ensure only the current highlighted landmark's button is visible
+    if (!this.activeDetailView) {
+      this.memoryLandmarks.forEach((landmark) => {
+        if (landmark.openButton) {
+          landmark.openButton.visible = (landmark === this.currentHighlightedLandmark);
+        }
+      });
     }
 
     // Update all landmarks with smooth transitions (only real memories)
@@ -431,6 +703,23 @@ export default class World {
       colorBoost.lerp(new THREE.Color(0xffffff), intensity * 0.3); // 30% brighter at max
       landmark.structureMaterial.color.lerp(colorBoost, 0.1);
     });
+
+    // Update detail view billboard transition
+    if (this.detailViewGroup) {
+      if (this.detailOpen) {
+        this.detailTransitionProgress = Math.min(1, this.detailTransitionProgress + this.detailLerpSpeed);
+        const currentPos = new THREE.Vector3();
+        currentPos.lerpVectors(this.detailStartPos, this.detailEndPos, this.detailTransitionProgress);
+        this.detailViewGroup.position.copy(currentPos);
+      } else {
+        this.detailTransitionProgress = Math.max(0, this.detailTransitionProgress - this.detailLerpSpeed);
+        if (this.detailTransitionProgress > 0) {
+          const currentPos = new THREE.Vector3();
+          currentPos.lerpVectors(this.detailStartPos, this.detailEndPos, this.detailTransitionProgress);
+          this.detailViewGroup.position.copy(currentPos);
+        }
+      }
+    }
   }
 }
 

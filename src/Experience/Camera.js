@@ -24,18 +24,26 @@ export default class Camera {
     this.followHeight = 5; // Height above ground (increased for elevation)
     this.rigSmoothness = 0.1; // Lerp factor for CameraRig position (lower = smoother)
 
-    // Mouse orbit control settings
+    // Camera orbit angles (script-controlled only)
     // Initial cinematic overview: left side, elevated, diagonal angle
-    this.orbitYaw = -Math.PI / 2; // Horizontal rotation - left side of car (45 degrees)
-    this.orbitPitch = Math.PI / 1.2; // Vertical rotation - elevated angle (30 degrees up)
-    this.orbitSensitivity = 0.003; // Mouse sensitivity
-    this.pitchMin = -Math.PI / 3; // Limit looking down (60 degrees)
-    this.pitchMax = Math.PI / 3; // Limit looking up (60 degrees)
+    this.orbitYaw = -Math.PI / 2; // Horizontal rotation - left side of car
+    this.orbitPitch = Math.PI / 1.2; // Vertical rotation - elevated angle
 
-    // Mouse drag state
-    this.isDragging = false;
-    this.lastMouseX = 0;
-    this.lastMouseY = 0;
+    // Initial camera angles (for reset when exiting memory zone)
+    this.initialYaw = -Math.PI / 2;
+    this.initialPitch = Math.PI / 1.2;
+
+    // Target camera angles (for smooth interpolation)
+    this.targetYaw = this.initialYaw;
+    this.targetPitch = this.initialPitch;
+
+    // Memory zone camera angles
+    this.zoneYaw = -Math.PI / 1.5;
+    this.zonePitch = Math.PI / 0.9;
+
+    // Camera transition settings
+    this.angleLerpSpeed = 0.05; // Lerp speed for angle transitions
+    this.memoryZoneRadius = 15; // Memory zone detection radius
 
     // Create CameraRig (Object3D that follows car)
     this.rig = new THREE.Object3D();
@@ -53,56 +61,12 @@ export default class Camera {
     // Initialize to a cinematic overview position (left, elevated)
     this.currentRigPosition = new THREE.Vector3(-5, 5, 5);
 
-    // Setup mouse controls
-    this.setupMouseControls();
-
     // Listen for resize events
     window.addEventListener('resize', () => {
       this.resize();
     });
   }
 
-  /**
-   * Setup mouse drag controls for camera orbit
-   */
-  setupMouseControls() {
-    // Mouse down - start dragging
-    window.addEventListener('mousedown', (event) => {
-      this.isDragging = true;
-      this.lastMouseX = event.clientX;
-      this.lastMouseY = event.clientY;
-    });
-
-    // Mouse move - rotate camera
-    window.addEventListener('mousemove', (event) => {
-      if (!this.isDragging) return;
-
-      // Calculate mouse delta
-      const deltaX = event.clientX - this.lastMouseX;
-      const deltaY = event.clientY - this.lastMouseY;
-
-      // Update orbit angles
-      this.orbitYaw -= deltaX * this.orbitSensitivity; // Horizontal rotation (yaw)
-      this.orbitPitch -= deltaY * this.orbitSensitivity; // Vertical rotation (pitch)
-
-      // Clamp pitch to prevent flipping
-      this.orbitPitch = Math.max(this.pitchMin, Math.min(this.pitchMax, this.orbitPitch));
-
-      // Update last mouse position
-      this.lastMouseX = event.clientX;
-      this.lastMouseY = event.clientY;
-    });
-
-    // Mouse up - stop dragging
-    window.addEventListener('mouseup', () => {
-      this.isDragging = false;
-    });
-
-    // Mouse leave - stop dragging
-    window.addEventListener('mouseleave', () => {
-      this.isDragging = false;
-    });
-  }
 
   /**
    * Update camera rig to follow car smoothly with orbit control
@@ -117,6 +81,30 @@ export default class Camera {
       car.body.position.y,
       car.body.position.z
     );
+
+    // Check if car is in memory zone
+    let isInMemoryZone = false;
+    if (this.experience.world && this.experience.world.memoryLandmarks) {
+      this.experience.world.memoryLandmarks.forEach((landmark) => {
+        const distance = carPosition.distanceTo(landmark.position);
+        if (distance < this.memoryZoneRadius) {
+          isInMemoryZone = true;
+        }
+      });
+    }
+
+    // Update target angles based on zone state
+    if (isInMemoryZone) {
+      this.targetYaw = this.zoneYaw;
+      this.targetPitch = this.zonePitch;
+    } else {
+      this.targetYaw = this.initialYaw;
+      this.targetPitch = this.initialPitch;
+    }
+
+    // Smoothly interpolate current angles to target angles
+    this.orbitYaw = THREE.MathUtils.lerp(this.orbitYaw, this.targetYaw, this.angleLerpSpeed);
+    this.orbitPitch = THREE.MathUtils.lerp(this.orbitPitch, this.targetPitch, this.angleLerpSpeed);
 
     // Calculate orbit position around car using spherical coordinates
     // Yaw: horizontal rotation around Y axis

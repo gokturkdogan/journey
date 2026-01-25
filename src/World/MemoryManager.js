@@ -11,14 +11,14 @@ export default class MemoryManager {
     this.memories = [
       {
         id: 'memory-1',
-        title: 'Early Days',
-        description: 'The beginning of a beautiful journey, filled with wonder and discovery.',
-        date: '2010-05-15',
-        coverImage: 'memory1-cover.jpg.jpg',
+        title: 'First Date',
+        description: 'The beginning of a beautiful journey, first met',
+        date: '22/09/2023',
+        coverImage: 'memory1-cover.jpeg',
         gallery: [
-          '/images/memory1/1.jpg',
-          '/images/memory1/2.jpg',
-          '/images/memory1/3.jpg'
+          'memory1-image1.jpeg',
+          'memory1-image2.jpeg',
+          'memory1-image3.jpeg'
         ],
         zPosition: 20,
         side: 'left',
@@ -37,7 +37,7 @@ export default class MemoryManager {
           '/images/memory2/3.jpg',
           '/images/memory2/4.jpg'
         ],
-        zPosition: 50,
+        zPosition: 100,
         side: 'left',
         isMemory: true,
         order: 2
