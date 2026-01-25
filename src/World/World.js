@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * World - Manages the timeline-style world with long straight road
@@ -18,9 +19,9 @@ export default class World {
 
     // Create world elements
     this.createGround();
-    this.createRoad();
     this.createRoadEdges();
     this.createMemoryLandmarks();
+    this.createHouses();
 
     // Proximity feedback settings
     this.proximityRadius = 15; // Detection radius
@@ -76,38 +77,6 @@ export default class World {
     this.scene.instance.add(ground);
   }
 
-  /**
-   * Create long straight road (timeline path)
-   */
-  createRoad() {
-    // Main road surface
-    const roadGeometry = new THREE.PlaneGeometry(
-      this.roadWidth,
-      this.timelineLength
-    );
-    const roadMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1a1a1a, // Dark gray road
-      roughness: 0.6,
-      metalness: 0.1
-    });
-    const road = new THREE.Mesh(roadGeometry, roadMaterial);
-    road.rotation.x = -Math.PI / 2;
-    road.position.set(0, 0.01, this.timelineLength / 2);
-    road.receiveShadow = true;
-    this.scene.instance.add(road);
-
-    // Center line (timeline indicator)
-    const centerLineGeometry = new THREE.PlaneGeometry(0.15, this.timelineLength);
-    const centerLineMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffff00,
-      emissive: 0xffff00,
-      emissiveIntensity: 0.5
-    });
-    const centerLine = new THREE.Mesh(centerLineGeometry, centerLineMaterial);
-    centerLine.rotation.x = -Math.PI / 2;
-    centerLine.position.set(0, 0.02, this.timelineLength / 2);
-    this.scene.instance.add(centerLine);
-  }
 
   /**
    * Create road edges/boundaries
@@ -147,6 +116,59 @@ export default class World {
     rightEdge.castShadow = true;
     rightEdge.receiveShadow = true;
     this.scene.instance.add(rightEdge);
+  }
+
+  /**
+   * Create houses along the road
+   */
+  createHouses() {
+    const loader = new GLTFLoader();
+    const modelPath = new URL('../assets/models/house.glb', import.meta.url).href;
+    
+    loader.load(
+      modelPath,
+      (gltf) => {
+        const originalHouse = gltf.scene;
+        
+        const box = new THREE.Box3().setFromObject(originalHouse);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        
+        originalHouse.position.x = -center.x;
+        originalHouse.position.y = -center.y;
+        originalHouse.position.z = -center.z;
+        
+        originalHouse.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        
+        const memories = this.experience.memoryManager.getMemoriesInOrder();
+        
+        memories.forEach((memory) => {
+          const landmark = this.memoryLandmarks.find(l => l.memoryId === memory.id);
+          if (landmark) {
+            const buildingMesh = landmark.group.getObjectByName('buildingMesh');
+            if (buildingMesh) {
+              const house = originalHouse.clone();
+              house.position.copy(landmark.position);
+              house.position.y = 0;
+              house.rotation.y = Math.PI / 2;
+              house.scale.set(1, 1, 1);
+              
+              buildingMesh.visible = false;
+              this.scene.instance.add(house);
+            }
+          }
+        });
+      },
+      undefined,
+      (error) => {
+        console.error('House model yüklenemedi:', error);
+      }
+    );
   }
 
   /**
