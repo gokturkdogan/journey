@@ -30,15 +30,22 @@ export default class PhysicsWorld {
    * Create a static ground plane collider
    */
   createGround() {
+    // Create ground material with moderate friction
+    const groundMaterial = new CANNON.Material('groundMaterial');
+    groundMaterial.friction = 0.6; // Moderate friction (reduced to prevent locking)
+    groundMaterial.restitution = 0.0; // No bouncing
+
     // Create ground body
     const groundShape = new CANNON.Plane();
     const groundBody = new CANNON.Body({ mass: 0 }); // mass: 0 = static body
     groundBody.addShape(groundShape);
     groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2); // Rotate to be horizontal
+    groundBody.material = groundMaterial;
 
     // Add to world
     this.world.addBody(groundBody);
     this.groundBody = groundBody;
+    this.groundMaterial = groundMaterial;
   }
 
   /**
