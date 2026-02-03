@@ -20,21 +20,30 @@ export default class Camera {
     );
 
     // Camera follow settings
-    this.followDistance = 8; // Distance behind car
-    this.followHeight = 3; // Height above ground
+    this.followDistance = 12; // Distance from car (increased for overview)
+    this.followHeight = 5; // Height above ground (increased for elevation)
     this.rigSmoothness = 0.1; // Lerp factor for CameraRig position (lower = smoother)
 
-    // Mouse orbit control settings
-    this.orbitYaw = 0; // Horizontal rotation (Y axis)
-    this.orbitPitch = 0.3; // Vertical rotation (X axis) - start slightly above
-    this.orbitSensitivity = 0.003; // Mouse sensitivity
-    this.pitchMin = -Math.PI / 3; // Limit looking down (60 degrees)
-    this.pitchMax = Math.PI / 3; // Limit looking up (60 degrees)
+    // Camera orbit angles (script-controlled only)
+    // Initial cinematic overview: left side, elevated, diagonal angle
+    this.orbitYaw = -Math.PI / 2; // Horizontal rotation - left side of car
+    this.orbitPitch = Math.PI / 1.2; // Vertical rotation - elevated angle
 
-    // Mouse drag state
-    this.isDragging = false;
-    this.lastMouseX = 0;
-    this.lastMouseY = 0;
+    // Initial camera angles (for reset when exiting memory zone)
+    this.initialYaw = -Math.PI / 2;
+    this.initialPitch = Math.PI / 1.2;
+
+    // Target camera angles (for smooth interpolation)
+    this.targetYaw = this.initialYaw;
+    this.targetPitch = this.initialPitch;
+
+    // Memory zone camera angles
+    this.zoneYaw = -Math.PI / 1.5;
+    this.zonePitch = Math.PI / 0.9;
+
+    // Camera transition settings
+    this.angleLerpSpeed = 0.05; // Lerp speed for angle transitions
+    this.memoryZoneRadius = 15; // Memory zone detection radius
 
     // Create CameraRig (Object3D that follows car)
     this.rig = new THREE.Object3D();
@@ -44,14 +53,13 @@ export default class Camera {
     // Add camera to rig (camera is child of rig, not car)
     this.rig.add(this.instance);
 
-    // Set camera offset (behind and above the rig position)
-    this.instance.position.set(0, this.followHeight, this.followDistance);
+    // Set camera offset (will be adjusted by orbit angles)
+    // Initial offset is neutral, orbit angles will position it
+    this.instance.position.set(0, 0, 0);
 
     // Current rig position (for smooth interpolation)
-    this.currentRigPosition = new THREE.Vector3(0, 0, 0);
-
-    // Setup mouse controls
-    this.setupMouseControls();
+    // Initialize to a cinematic overview position (left, elevated)
+    this.currentRigPosition = new THREE.Vector3(-5, 5, 5);
 
     // Listen for resize events
     window.addEventListener('resize', () => {
@@ -59,47 +67,6 @@ export default class Camera {
     });
   }
 
-  /**
-   * Setup mouse drag controls for camera orbit
-   */
-  setupMouseControls() {
-    // Mouse down - start dragging
-    window.addEventListener('mousedown', (event) => {
-      this.isDragging = true;
-      this.lastMouseX = event.clientX;
-      this.lastMouseY = event.clientY;
-    });
-
-    // Mouse move - rotate camera
-    window.addEventListener('mousemove', (event) => {
-      if (!this.isDragging) return;
-
-      // Calculate mouse delta
-      const deltaX = event.clientX - this.lastMouseX;
-      const deltaY = event.clientY - this.lastMouseY;
-
-      // Update orbit angles
-      this.orbitYaw -= deltaX * this.orbitSensitivity; // Horizontal rotation (yaw)
-      this.orbitPitch -= deltaY * this.orbitSensitivity; // Vertical rotation (pitch)
-
-      // Clamp pitch to prevent flipping
-      this.orbitPitch = Math.max(this.pitchMin, Math.min(this.pitchMax, this.orbitPitch));
-
-      // Update last mouse position
-      this.lastMouseX = event.clientX;
-      this.lastMouseY = event.clientY;
-    });
-
-    // Mouse up - stop dragging
-    window.addEventListener('mouseup', () => {
-      this.isDragging = false;
-    });
-
-    // Mouse leave - stop dragging
-    window.addEventListener('mouseleave', () => {
-      this.isDragging = false;
-    });
-  }
 
   /**
    * Update camera rig to follow car smoothly with orbit control
@@ -115,6 +82,30 @@ export default class Camera {
       car.body.position.z
     );
 
+    // Check if car is in memory zone
+    let isInMemoryZone = false;
+    if (this.experience.world && this.experience.world.memoryLandmarks) {
+      this.experience.world.memoryLandmarks.forEach((landmark) => {
+        const distance = carPosition.distanceTo(landmark.position);
+        if (distance < this.memoryZoneRadius) {
+          isInMemoryZone = true;
+        }
+      });
+    }
+
+    // Update target angles based on zone state
+    if (isInMemoryZone) {
+      this.targetYaw = this.zoneYaw;
+      this.targetPitch = this.zonePitch;
+    } else {
+      this.targetYaw = this.initialYaw;
+      this.targetPitch = this.initialPitch;
+    }
+
+    // Smoothly interpolate current angles to target angles
+    this.orbitYaw = THREE.MathUtils.lerp(this.orbitYaw, this.targetYaw, this.angleLerpSpeed);
+    this.orbitPitch = THREE.MathUtils.lerp(this.orbitPitch, this.targetPitch, this.angleLerpSpeed);
+
     // Calculate orbit position around car using spherical coordinates
     // Yaw: horizontal rotation around Y axis
     // Pitch: vertical rotation (tilt up/down)
@@ -126,19 +117,36 @@ export default class Camera {
     const z = orbitDistance * Math.cos(this.orbitPitch) * Math.cos(this.orbitYaw);
 
     // Calculate target rig position (orbiting around car)
+    // Positioned to the left, elevated, at diagonal angle
     const targetRigPosition = new THREE.Vector3();
     targetRigPosition.copy(carPosition);
     targetRigPosition.x += x;
     targetRigPosition.y += this.followHeight + y; // Add pitch offset and base height
     targetRigPosition.z += z;
+    
+    // Ensure camera doesn't clip through ground (minimum height)
+    const minHeight = 2;
+    if (targetRigPosition.y < minHeight) {
+      targetRigPosition.y = minHeight;
+    }
 
     // Smoothly interpolate rig position (lerp for cinematic lag)
-    this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);
+    // If car just teleported, snap camera immediately
+    const distance = this.currentRigPosition.distanceTo(targetRigPosition);
+    if (distance > 20) {
+      // Large distance change indicates teleport - snap immediately
+      this.currentRigPosition.copy(targetRigPosition);
+    } else {
+      // Normal smooth interpolation
+      this.currentRigPosition.lerp(targetRigPosition, this.rigSmoothness);
+    }
     this.rig.position.copy(this.currentRigPosition);
 
-    // Camera always looks at the car
+    // Camera looks at the car and timeline road
+    // Look slightly ahead along the road for better overview
     const lookAtTarget = new THREE.Vector3();
     lookAtTarget.copy(carPosition);
+    lookAtTarget.z += 10; // Look ahead along the timeline road
     lookAtTarget.y += 0.5; // Look slightly above car center
     this.instance.lookAt(lookAtTarget);
   }

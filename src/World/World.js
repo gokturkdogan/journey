@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * World - Manages the timeline-style world with long straight road
@@ -13,11 +14,46 @@ export default class World {
     this.roadWidth = 10; // Road width
     this.groundWidth = 30; // Ground extends beyond road
 
+    // Texture loader for cover images
+    this.textureLoader = new THREE.TextureLoader();
+
     // Create world elements
     this.createGround();
-    this.createRoad();
     this.createRoadEdges();
     this.createMemoryLandmarks();
+    this.createHouses();
+
+    // Proximity feedback settings
+    this.proximityRadius = 15; // Detection radius
+    this.currentHighlightedLandmark = null; // Only one highlighted at a time
+    this.highlightIntensity = 0; // Current highlight intensity (0-1)
+    this.highlightSpeed = 0.05; // Lerp speed for smooth transitions
+
+    // Memory detail view state
+    this.activeDetailView = null;
+    this.detailViewGroup = null;
+    this.galleryBillboard = null;
+    this.galleryCurrentIndex = 0;
+    this.openButton = null;
+    this.closeButton = null;
+    this.prevButton = null;
+    this.nextButton = null;
+    this.hiddenObjects = [];
+    this.detailOpen = false;
+    this.detailTransitionProgress = 0;
+    this.detailStartPos = new THREE.Vector3();
+    this.detailEndPos = new THREE.Vector3();
+    this.detailLerpSpeed = 0.08;
+
+    // Raycaster for UI interactions
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+    this.setupRaycaster();
+
+    // Listen for updates to check proximity
+    this.experience.time.on('tick', () => {
+      this.update();
+    });
   }
 
   /**
@@ -30,7 +66,7 @@ export default class World {
       this.timelineLength
     );
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: 0x0f0f0f,
+      color: 0x2a2a3a, // Slightly lighter gray with muted blue tint
       roughness: 0.9,
       metalness: 0.0
     });
@@ -41,38 +77,6 @@ export default class World {
     this.scene.instance.add(ground);
   }
 
-  /**
-   * Create long straight road (timeline path)
-   */
-  createRoad() {
-    // Main road surface
-    const roadGeometry = new THREE.PlaneGeometry(
-      this.roadWidth,
-      this.timelineLength
-    );
-    const roadMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2a2a,
-      roughness: 0.6,
-      metalness: 0.1
-    });
-    const road = new THREE.Mesh(roadGeometry, roadMaterial);
-    road.rotation.x = -Math.PI / 2;
-    road.position.set(0, 0.01, this.timelineLength / 2);
-    road.receiveShadow = true;
-    this.scene.instance.add(road);
-
-    // Center line (timeline indicator)
-    const centerLineGeometry = new THREE.PlaneGeometry(0.15, this.timelineLength);
-    const centerLineMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffff00,
-      emissive: 0xffff00,
-      emissiveIntensity: 0.5
-    });
-    const centerLine = new THREE.Mesh(centerLineGeometry, centerLineMaterial);
-    centerLine.rotation.x = -Math.PI / 2;
-    centerLine.position.set(0, 0.02, this.timelineLength / 2);
-    this.scene.instance.add(centerLine);
-  }
 
   /**
    * Create road edges/boundaries
@@ -115,154 +119,629 @@ export default class World {
   }
 
   /**
+   * Create houses along the road
+   */
+  createHouses() {
+    const loader = new GLTFLoader();
+    const modelPath = new URL('../assets/models/house.glb', import.meta.url).href;
+    
+    loader.load(
+      modelPath,
+      (gltf) => {
+        const originalHouse = gltf.scene;
+        
+        const box = new THREE.Box3().setFromObject(originalHouse);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        
+        originalHouse.position.x = -center.x;
+        originalHouse.position.y = -center.y;
+        originalHouse.position.z = -center.z;
+        
+        originalHouse.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        
+        const memories = this.experience.memoryManager.getMemoriesInOrder();
+        
+        memories.forEach((memory) => {
+          const landmark = this.memoryLandmarks.find(l => l.memoryId === memory.id);
+          if (landmark) {
+            const buildingMesh = landmark.group.getObjectByName('buildingMesh');
+            if (buildingMesh) {
+              const house = originalHouse.clone();
+              house.position.copy(landmark.position);
+              house.position.y = 0;
+              house.rotation.y = Math.PI / 2;
+              house.scale.set(1, 1, 1);
+              
+              buildingMesh.visible = false;
+              this.scene.instance.add(house);
+            }
+          }
+        });
+      },
+      undefined,
+      (error) => {
+        console.error('House model yüklenemedi:', error);
+      }
+    );
+  }
+
+  /**
    * Create memory landmarks along the timeline road
    */
   createMemoryLandmarks() {
-    // Define landmark positions along the timeline (chronological order)
-    const landmarkPositions = [
-      { z: 20, side: 'left' },   // Early memory
-      { z: 50, side: 'right' },  // Memory 2
-      { z: 80, side: 'left' },   // Memory 3
-      { z: 120, side: 'right' }, // Memory 4
-      { z: 160, side: 'left' },  // Memory 5
-      { z: 200, side: 'right' }, // Memory 6
-      { z: 240, side: 'left' },  // Memory 7
-      { z: 280, side: 'right' }, // Memory 8
-      { z: 320, side: 'left' },  // Memory 9
-      { z: 360, side: 'right' }, // Memory 10
-      { z: 400, side: 'left' },  // Memory 11
-      { z: 440, side: 'right' }, // Memory 12
-    ];
+    // Get memory data from MemoryManager
+    const memories = this.experience.memoryManager.getMemoriesInOrder();
 
-    landmarkPositions.forEach((pos, index) => {
-      this.createMemoryLandmark(pos.z, pos.side, index + 1);
+    // Store landmark references for proximity detection (only real memories)
+    this.memoryLandmarks = [];
+    
+    // Left side X position for real memories
+    const leftSideX = -6;
+    
+    memories.forEach((memory) => {
+      // Create REAL memory on left side (X < 0)
+      const memoryGroup = this.createMemoryPrefab(memory, leftSideX);
+      const openButton = this.createOpenButton(memoryGroup, memory);
+      const memoryLandmark = {
+        group: memoryGroup,
+        structure: memoryGroup.getObjectByName('buildingMesh'),
+        structureMaterial: memoryGroup.getObjectByName('buildingMesh').material,
+        position: new THREE.Vector3(leftSideX, 0, memory.zPosition),
+        originalScale: 1,
+        originalEmissive: new THREE.Color(0x000000),
+        originalColor: memoryGroup.getObjectByName('buildingMesh').material.color.clone(),
+        highlightIntensity: 0,
+        memoryId: memory.id,
+        isMemory: true,
+        openButton: openButton
+      };
+      this.memoryLandmarks.push(memoryLandmark);
     });
   }
 
   /**
-   * Create a single memory landmark structure
-   * @param {number} zPosition - Position along timeline (Z axis)
-   * @param {string} side - 'left' or 'right' side of road
-   * @param {number} memoryIndex - Index for visual variation
+   * Create text texture from canvas
+   * @param {string} text - Text to render
+   * @param {number} fontSize - Font size in pixels
+   * @param {string} backgroundColor - Background color hex
+   * @param {string} textColor - Text color hex
+   * @returns {THREE.CanvasTexture} Canvas texture
    */
-  createMemoryLandmark(zPosition, side, memoryIndex) {
-    const landmarkGroup = new THREE.Group();
-    const sideOffset = side === 'left' ? -8 : 8; // Distance from road center
-    landmarkGroup.position.set(sideOffset, 0, zPosition);
+  createTextTexture(text, fontSize = 32, backgroundColor = '#ffffff', textColor = '#000000') {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    context.font = `bold ${fontSize}px Arial`;
+    const metrics = context.measureText(text);
+    const textWidth = metrics.width;
+    const textHeight = fontSize;
+    
+    canvas.width = textWidth + 40;
+    canvas.height = textHeight + 20;
+    
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    
+    context.fillStyle = textColor;
+    context.font = `bold ${fontSize}px Arial`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+  }
 
-    // Base structure (building/platform)
-    const baseWidth = 3;
-    const baseDepth = 3;
-    const baseHeight = 1;
-    const baseGeometry = new THREE.BoxGeometry(baseWidth, baseHeight, baseDepth);
-    const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x3a3a3a,
+  /**
+   * Create memory prefab group
+   * @param {Object} memory - Memory data object
+   * @param {number} xPosition - X position (right side > 0)
+   * @returns {THREE.Group} Memory group
+   */
+  createMemoryPrefab(memory, xPosition) {
+    const memoryGroup = new THREE.Group();
+    memoryGroup.name = `memory-${memory.id}`;
+    memoryGroup.position.set(xPosition, 0, memory.zPosition);
+    memoryGroup.userData.isMemory = true;
+    memoryGroup.userData.memoryId = memory.id;
+
+    // Yerleşim offset değerleri (X ekseni boyunca)
+    const OFFSET_DATE_SIGN = 0;
+    const OFFSET_BUILDING = 3;
+    const OFFSET_TITLE_SIGN = 7;
+    const OFFSET_BILLBOARD = 11;
+
+    // 1) Date sign (küçük sokak tabelası - MEMORY TARİHİ)
+    const dateSignWidth = 1.5;
+    const dateSignHeight = 0.4;
+    const dateSignGeometry = new THREE.PlaneGeometry(dateSignWidth, dateSignHeight);
+    const dateTexture = this.createTextTexture(memory.date, 16, '#f0f0f0', '#333333');
+    const dateSignMaterial = new THREE.MeshStandardMaterial({
+      map: dateTexture,
+      side: THREE.DoubleSide
+    });
+    const dateSignMesh = new THREE.Mesh(dateSignGeometry, dateSignMaterial);
+    dateSignMesh.name = 'dateSignMesh';
+    dateSignMesh.position.set(OFFSET_DATE_SIGN, dateSignHeight / 2, 0);
+    dateSignMesh.rotation.y = Math.PI;
+    dateSignMesh.castShadow = true;
+    memoryGroup.add(dateSignMesh);
+
+    // 2) Building (ana yapı - EV / BİNA)
+    const buildingWidth = 3;
+    const buildingHeight = 4;
+    const buildingDepth = 3;
+    const buildingGeometry = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingDepth);
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: 0x6a6a6a,
       roughness: 0.7,
       metalness: 0.2
     });
-    const base = new THREE.Mesh(baseGeometry, baseMaterial);
-    base.position.y = baseHeight / 2;
-    base.castShadow = true;
-    base.receiveShadow = true;
-    landmarkGroup.add(base);
+    const buildingMesh = new THREE.Mesh(buildingGeometry, buildingMaterial);
+    buildingMesh.name = 'buildingMesh';
+    buildingMesh.position.set(OFFSET_BUILDING, buildingHeight / 2, 0);
+    buildingMesh.castShadow = true;
+    buildingMesh.receiveShadow = true;
+    memoryGroup.add(buildingMesh);
 
-    // Main structure (building body) - varies by index
-    const structureHeight = 2 + (memoryIndex % 3) * 0.5; // Vary height
-    const structureWidth = 2.5;
-    const structureDepth = 2.5;
-    const structureGeometry = new THREE.BoxGeometry(
-      structureWidth,
-      structureHeight,
-      structureDepth
-    );
-    const structureMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4a4a4a + (memoryIndex * 0x050505), // Slight color variation
-      roughness: 0.6,
-      metalness: 0.3
-    });
-    const structure = new THREE.Mesh(structureGeometry, structureMaterial);
-    structure.position.y = baseHeight + structureHeight / 2;
-    structure.castShadow = true;
-    structure.receiveShadow = true;
-    landmarkGroup.add(structure);
-
-    // Billboard (placeholder for image)
-    const billboardWidth = 2;
-    const billboardHeight = 1.5;
-    const billboardGeometry = new THREE.PlaneGeometry(billboardWidth, billboardHeight);
-    const billboardMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2a2a,
-      roughness: 0.8,
-      metalness: 0.1,
+    // 3) Title sign (sokak tabelası - MEMORY İSMİ)
+    const titleSignWidth = 2.5;
+    const titleSignHeight = 0.8;
+    const titleSignGeometry = new THREE.PlaneGeometry(titleSignWidth, titleSignHeight);
+    const titleTexture = this.createTextTexture(memory.title, 24, '#ffffff', '#000000');
+    const titleSignMaterial = new THREE.MeshStandardMaterial({
+      map: titleTexture,
       side: THREE.DoubleSide
     });
-    const billboard = new THREE.Mesh(billboardGeometry, billboardMaterial);
-    billboard.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight / 2 + 0.2,
-      structureDepth / 2 + 0.1
-    );
-    billboard.rotation.y = side === 'left' ? -Math.PI / 4 : Math.PI / 4; // Face road
-    billboard.castShadow = true;
-    landmarkGroup.add(billboard);
+    const titleSignMesh = new THREE.Mesh(titleSignGeometry, titleSignMaterial);
+    titleSignMesh.name = 'titleSignMesh';
+    titleSignMesh.position.set(OFFSET_TITLE_SIGN, titleSignHeight / 2, 0);
+    titleSignMesh.rotation.y = Math.PI;
+    titleSignMesh.castShadow = true;
+    memoryGroup.add(titleSignMesh);
 
-    // Billboard frame
-    const frameThickness = 0.1;
-    const frameGeometry = new THREE.BoxGeometry(
-      billboardWidth + frameThickness * 2,
-      billboardHeight + frameThickness * 2,
-      frameThickness
-    );
-    const frameMaterial = new THREE.MeshStandardMaterial({
-      color: 0x666666,
-      roughness: 0.5,
-      metalness: 0.4
+    // 4) Billboard (reklam billboard'u - KAPAK FOTOĞRAFI)
+    const baseBillboardWidth = 2.5;
+    const baseBillboardHeight = 2;
+    const billboardGeometry = new THREE.PlaneGeometry(baseBillboardWidth, baseBillboardHeight);
+    const billboardMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      side: THREE.DoubleSide
     });
-    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
-    frame.position.copy(billboard.position);
-    frame.position.z += 0.05;
-    frame.rotation.y = billboard.rotation.y;
-    frame.castShadow = true;
-    landmarkGroup.add(frame);
+    const billboardMesh = new THREE.Mesh(billboardGeometry, billboardMaterial);
+    billboardMesh.name = 'billboardMesh';
+    billboardMesh.position.set(OFFSET_BILLBOARD, 1.5, 0);
+    billboardMesh.rotation.y = Math.PI;
+    billboardMesh.castShadow = true;
+    memoryGroup.add(billboardMesh);
 
-    // Title/Sign (placeholder)
-    const signWidth = 1.5;
-    const signHeight = 0.3;
-    const signGeometry = new THREE.PlaneGeometry(signWidth, signHeight);
-    const signMaterial = new THREE.MeshStandardMaterial({
-      color: 0x555555,
+    const imagePath = memory.coverImage.startsWith('/') 
+      ? memory.coverImage 
+      : new URL(`../assets/images/${memory.coverImage}`, import.meta.url).href;
+    
+    const coverTexture = this.textureLoader.load(
+      imagePath,
+      (texture) => {
+        const image = texture.image;
+        const aspectRatio = image.width / image.height;
+        const targetHeight = 4;
+        const targetWidth = targetHeight * aspectRatio;
+        billboardMesh.scale.set(targetWidth / baseBillboardWidth, targetHeight / baseBillboardHeight, 1);
+        billboardMaterial.map = texture;
+        billboardMaterial.needsUpdate = true;
+      },
+      undefined,
+      (error) => {
+        console.warn(`Cover image yüklenemedi: ${memory.coverImage}`, error);
+      }
+    );
+
+    memoryGroup.rotation.y = Math.PI / 2 + Math.PI;
+
+    this.scene.instance.add(memoryGroup);
+    return memoryGroup;
+  }
+
+  /**
+   * Create decorative copy (building only, no signs/billboard)
+   * @param {Object} memory - Memory data object
+   * @param {number} xPosition - X position (left side < 0)
+   */
+  createDecorativeCopy(memory, xPosition) {
+    const decorativeGroup = new THREE.Group();
+    decorativeGroup.position.set(xPosition, 0, memory.zPosition);
+    decorativeGroup.userData.isDecorative = true;
+    decorativeGroup.userData.isMemory = false;
+
+    // Only building, no signs or billboard
+    const buildingWidth = 3;
+    const buildingHeight = 4;
+    const buildingDepth = 3;
+    const buildingGeometry = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingDepth);
+    const buildingMaterial = new THREE.MeshStandardMaterial({
+      color: 0x5a5a5a,
       roughness: 0.7,
-      metalness: 0.2,
+      metalness: 0.2
+    });
+    const buildingMesh = new THREE.Mesh(buildingGeometry, buildingMaterial);
+    buildingMesh.position.y = buildingHeight / 2;
+    buildingMesh.castShadow = true;
+    buildingMesh.receiveShadow = true;
+    decorativeGroup.add(buildingMesh);
+
+    decorativeGroup.rotation.y = Math.PI / 2 + Math.PI;
+
+    this.scene.instance.add(decorativeGroup);
+  }
+
+  /**
+   * Setup raycaster for UI interactions
+   */
+  setupRaycaster() {
+    window.addEventListener('click', (event) => {
+      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      this.raycaster.setFromCamera(this.mouse, this.experience.camera.instance);
+      const intersects = this.raycaster.intersectObjects(this.scene.instance.children, true);
+
+      if (intersects.length > 0) {
+        const object = intersects[0].object;
+        if (object.userData.isOpenButton) {
+          this.openDetailView(object.userData.memoryId);
+        } else if (object.userData.isCloseButton) {
+          this.closeDetailView();
+        } else if (object.userData.isPrevButton) {
+          this.prevGalleryImage();
+        } else if (object.userData.isNextButton) {
+          this.nextGalleryImage();
+        }
+      }
+    });
+  }
+
+  /**
+   * Create open detail button
+   */
+  createOpenButton(memoryGroup, memory) {
+    const buttonGeometry = new THREE.PlaneGeometry(1, 1);
+    const buttonMaterial = new THREE.MeshBasicMaterial({
+      color: 0x4a90e2,
+      transparent: true,
+      opacity: 0.8,
       side: THREE.DoubleSide
     });
-    const sign = new THREE.Mesh(signGeometry, signMaterial);
-    sign.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight + 0.5,
-      structureDepth / 2 + 0.1
-    );
-    sign.rotation.y = billboard.rotation.y;
-    sign.castShadow = true;
-    landmarkGroup.add(sign);
+    const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+    button.name = 'openButton';
+    button.position.set(2, 5, 0);
+    button.userData.isOpenButton = true;
+    button.userData.memoryId = memory.id;
+    button.visible = false;
+    memoryGroup.add(button);
+    return button;
+  }
 
-    // Sign support pole
-    const poleGeometry = new THREE.CylinderGeometry(0.05, 0.05, signHeight, 8);
-    const poleMaterial = new THREE.MeshStandardMaterial({
-      color: 0x444444,
-      roughness: 0.6,
-      metalness: 0.3
+  /**
+   * Open detail view
+   */
+  openDetailView(memoryId) {
+    const memory = this.experience.memoryManager.getMemoryById(memoryId);
+    if (!memory || !memory.gallery || memory.gallery.length === 0) return;
+
+    const landmark = this.memoryLandmarks.find(l => l.memoryId === memoryId);
+    if (!landmark) return;
+
+    this.activeDetailView = memoryId;
+    this.galleryCurrentIndex = 0;
+    this.hiddenObjects = [];
+
+    this.memoryLandmarks.forEach((l) => {
+      if (l.openButton) {
+        l.openButton.visible = false;
+      }
     });
-    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
-    pole.position.set(
-      0,
-      baseHeight + structureHeight + billboardHeight + signHeight / 2 + 0.2,
-      structureDepth / 2 + 0.1
-    );
-    pole.rotation.z = Math.PI / 2;
-    pole.castShadow = true;
-    landmarkGroup.add(pole);
 
-    this.scene.instance.add(landmarkGroup);
+    this.scene.instance.traverse((object) => {
+      if (object.type === 'Mesh' || object.type === 'Group') {
+        if (object.userData.isMemory || object.userData.isDecorative || 
+            object.name.includes('ground') || object.name.includes('road') ||
+            object.name.includes('edge') || object.name.includes('line')) {
+          if (object.visible) {
+            this.hiddenObjects.push(object);
+            object.visible = false;
+          }
+        }
+      }
+    });
+
+    const buildingMesh = landmark.group.getObjectByName('buildingMesh');
+    const buildingWorldPos = new THREE.Vector3();
+    if (buildingMesh) {
+      buildingMesh.getWorldPosition(buildingWorldPos);
+    } else {
+      buildingWorldPos.copy(landmark.position);
+      buildingWorldPos.y = 2;
+    }
+
+    this.detailStartPos.copy(buildingWorldPos);
+    this.detailStartPos.y = 3;
+    this.detailEndPos.copy(buildingWorldPos);
+    this.detailEndPos.y = 3;
+
+    this.detailViewGroup = new THREE.Group();
+    this.detailViewGroup.position.copy(this.detailStartPos);
+    this.detailTransitionProgress = 0;
+    this.detailOpen = true;
+
+    const galleryWidth = 12;
+    const galleryHeight = 8;
+    const galleryGeometry = new THREE.PlaneGeometry(galleryWidth, galleryHeight);
+    const galleryMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+    this.galleryBillboard = new THREE.Mesh(galleryGeometry, galleryMaterial);
+    this.galleryBillboard.rotation.y = Math.PI / 2;
+    this.detailViewGroup.add(this.galleryBillboard);
+
+    this.loadGalleryImage(memory.gallery[0]);
+
+    const buttonSize = 0.8;
+    const buttonMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide
+    });
+
+    this.closeButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.closeButton.position.set(galleryWidth / 2 + 0.8, galleryHeight / 2 + 0.8, 0.1);
+    this.closeButton.userData.isCloseButton = true;
+    this.galleryBillboard.add(this.closeButton);
+
+    this.prevButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.prevButton.position.set(-galleryWidth / 2 - 0.8, -galleryHeight / 3 + 0.5, 0.1);
+    this.prevButton.userData.isPrevButton = true;
+    this.galleryBillboard.add(this.prevButton);
+
+    this.nextButton = new THREE.Mesh(
+      new THREE.PlaneGeometry(buttonSize, buttonSize),
+      buttonMaterial.clone()
+    );
+    this.nextButton.position.set(galleryWidth / 2 + 0.8, -galleryHeight / 3 + 0.5, 0.1);
+    this.nextButton.userData.isNextButton = true;
+    this.galleryBillboard.add(this.nextButton);
+
+    this.scene.instance.add(this.detailViewGroup);
+
+    if (this.experience.camera) {
+      this.experience.camera.targetYaw = 0;
+      this.experience.camera.targetPitch = 0;
+    }
+  }
+
+  /**
+   * Close detail view
+   */
+  closeDetailView() {
+    if (!this.activeDetailView) return;
+
+    this.detailOpen = false;
+
+    this.hiddenObjects.forEach((object) => {
+      object.visible = true;
+    });
+    this.hiddenObjects = [];
+
+    const landmark = this.memoryLandmarks.find(l => l.memoryId === this.activeDetailView);
+    if (landmark && landmark.openButton) {
+      landmark.openButton.visible = true;
+    }
+
+    if (this.detailViewGroup) {
+      this.scene.instance.remove(this.detailViewGroup);
+      this.detailViewGroup = null;
+    }
+
+    this.galleryBillboard = null;
+    this.closeButton = null;
+    this.prevButton = null;
+    this.nextButton = null;
+    this.activeDetailView = null;
+    this.galleryCurrentIndex = 0;
+    this.detailTransitionProgress = 0;
+
+    if (this.experience.camera) {
+      this.experience.camera.targetYaw = this.experience.camera.initialYaw;
+      this.experience.camera.targetPitch = this.experience.camera.initialPitch;
+    }
+  }
+
+  /**
+   * Load gallery image
+   */
+  loadGalleryImage(imagePath) {
+    if (!this.galleryBillboard) return;
+
+    const fullPath = imagePath.startsWith('/') 
+      ? imagePath 
+      : new URL(`../assets/images/${imagePath}`, import.meta.url).href;
+
+    this.textureLoader.load(
+      fullPath,
+      (texture) => {
+        this.galleryBillboard.material.map = texture;
+        this.galleryBillboard.material.needsUpdate = true;
+      },
+      undefined,
+      (error) => {
+        console.warn(`Gallery image yüklenemedi: ${imagePath}`, error);
+      }
+    );
+  }
+
+  /**
+   * Previous gallery image
+   */
+  prevGalleryImage() {
+    if (!this.activeDetailView) return;
+    const memory = this.experience.memoryManager.getMemoryById(this.activeDetailView);
+    if (!memory || !memory.gallery) return;
+
+    this.galleryCurrentIndex = (this.galleryCurrentIndex - 1 + memory.gallery.length) % memory.gallery.length;
+    this.loadGalleryImage(memory.gallery[this.galleryCurrentIndex]);
+  }
+
+  /**
+   * Next gallery image
+   */
+  nextGalleryImage() {
+    if (!this.activeDetailView) return;
+    const memory = this.experience.memoryManager.getMemoryById(this.activeDetailView);
+    if (!memory || !memory.gallery) return;
+
+    this.galleryCurrentIndex = (this.galleryCurrentIndex + 1) % memory.gallery.length;
+    this.loadGalleryImage(memory.gallery[this.galleryCurrentIndex]);
+  }
+
+  /**
+   * Update proximity detection and highlight effects
+   */
+  update() {
+    // Wait for car to be initialized
+    if (!this.experience.car) return;
+
+    const car = this.experience.car;
+    const carPosition = new THREE.Vector3(
+      car.body.position.x,
+      car.body.position.y,
+      car.body.position.z
+    );
+
+    // Find closest memory landmark
+    let closestLandmark = null;
+    let closestDistance = Infinity;
+
+    this.memoryLandmarks.forEach((landmark) => {
+      const distance = carPosition.distanceTo(landmark.position);
+      
+      if (distance < this.proximityRadius && distance < closestDistance) {
+        closestDistance = distance;
+        closestLandmark = landmark;
+      }
+    });
+
+    // Update highlight state and active memory
+    if (closestLandmark !== this.currentHighlightedLandmark) {
+      // Reset previous highlight
+      if (this.currentHighlightedLandmark) {
+        this.currentHighlightedLandmark.highlightIntensity = 0;
+        if (this.currentHighlightedLandmark.openButton) {
+          this.currentHighlightedLandmark.openButton.visible = false;
+        }
+      }
+      
+      // Set new highlight
+      this.currentHighlightedLandmark = closestLandmark;
+      
+      // Update active memory in MemoryManager
+      if (closestLandmark && closestLandmark.memoryId) {
+        this.experience.memoryManager.setActiveMemory(closestLandmark.memoryId);
+        if (closestLandmark.openButton && !this.activeDetailView) {
+          closestLandmark.openButton.visible = true;
+        }
+      }
+    } else if (!closestLandmark && this.currentHighlightedLandmark) {
+      // Car exited all memory zones
+      this.currentHighlightedLandmark.highlightIntensity = 0;
+      if (this.currentHighlightedLandmark.openButton) {
+        this.currentHighlightedLandmark.openButton.visible = false;
+      }
+      this.currentHighlightedLandmark = null;
+      this.experience.memoryManager.clearActiveMemory();
+    }
+
+    // Ensure only the current highlighted landmark's button is visible
+    if (!this.activeDetailView) {
+      this.memoryLandmarks.forEach((landmark) => {
+        if (landmark.openButton) {
+          landmark.openButton.visible = (landmark === this.currentHighlightedLandmark);
+        }
+      });
+    }
+
+    // Update all landmarks with smooth transitions (only real memories)
+    this.memoryLandmarks.forEach((landmark) => {
+      // Skip if not a memory (safety check)
+      if (!landmark.isMemory) return;
+      
+      const isHighlighted = landmark === this.currentHighlightedLandmark;
+      
+      // Smoothly transition highlight intensity
+      if (isHighlighted) {
+        landmark.highlightIntensity = Math.min(
+          1,
+          landmark.highlightIntensity + this.highlightSpeed
+        );
+      } else {
+        landmark.highlightIntensity = Math.max(
+          0,
+          landmark.highlightIntensity - this.highlightSpeed
+        );
+      }
+
+      // Apply visual effects based on highlight intensity
+      const intensity = landmark.highlightIntensity;
+      
+      // Scale effect (slight scale up)
+      const targetScale = 1 + intensity * 0.1; // 10% scale increase at max
+      landmark.group.scale.lerp(
+        new THREE.Vector3(targetScale, targetScale, targetScale),
+        0.1
+      );
+
+      // Emissive color effect (soft glow)
+      const emissiveIntensity = intensity * 0.5; // Max 50% emissive
+      const emissiveColor = new THREE.Color(0xffffff);
+      emissiveColor.multiplyScalar(emissiveIntensity);
+      landmark.structureMaterial.emissive.lerp(emissiveColor, 0.1);
+      landmark.structureMaterial.emissiveIntensity = emissiveIntensity;
+
+      // Brightness/color boost
+      const colorBoost = new THREE.Color(landmark.originalColor);
+      colorBoost.lerp(new THREE.Color(0xffffff), intensity * 0.3); // 30% brighter at max
+      landmark.structureMaterial.color.lerp(colorBoost, 0.1);
+    });
+
+    // Update detail view billboard transition
+    if (this.detailViewGroup) {
+      if (this.detailOpen) {
+        this.detailTransitionProgress = Math.min(1, this.detailTransitionProgress + this.detailLerpSpeed);
+        const currentPos = new THREE.Vector3();
+        currentPos.lerpVectors(this.detailStartPos, this.detailEndPos, this.detailTransitionProgress);
+        this.detailViewGroup.position.copy(currentPos);
+      } else {
+        this.detailTransitionProgress = Math.max(0, this.detailTransitionProgress - this.detailLerpSpeed);
+        if (this.detailTransitionProgress > 0) {
+          const currentPos = new THREE.Vector3();
+          currentPos.lerpVectors(this.detailStartPos, this.detailEndPos, this.detailTransitionProgress);
+          this.detailViewGroup.position.copy(currentPos);
+        }
+      }
+    }
   }
 }
 

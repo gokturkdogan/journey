@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * Car - Drivable car with physics and keyboard controls
@@ -11,15 +12,15 @@ export default class Car {
     this.physicsWorld = this.experience.physicsWorld;
 
     // Car dimensions
-    this.width = 1.6;
-    this.height = 0.6;
-    this.length = 3.5;
+    this.width = 100;
+    this.height = -0.01;
+    this.length = 5;
 
     // Car physics properties
     this.mass = 800; // kg
-    this.maxSpeed = 25; // m/s
-    this.acceleration = 25; // m/s² (increased to overcome static friction)
-    this.brakingForce = 20; // m/s²
+    this.maxSpeed = 15; // m/s
+    this.acceleration = 5; // m/s² (increased to overcome static friction)
+    this.brakingForce = 10; // m/s²
     this.colliderOffset = 0.1; // Lift collider slightly above ground
 
     // Current state
@@ -30,6 +31,11 @@ export default class Car {
       forward: false,
       backward: false
     };
+
+    // Auto-navigation state
+    this.isNavigating = false;
+    this.navigationTarget = null;
+    this.navigationArrivalDistance = 2; // Distance threshold for arrival
 
     // Create physics body
     this.createPhysicsBody();
@@ -44,6 +50,62 @@ export default class Car {
     this.experience.time.on('tick', () => {
       this.update();
     });
+  }
+
+  /**
+   * Navigate car to a specific world position (smooth movement)
+   * @param {THREE.Vector3} targetPosition - Target world position
+   */
+  navigateTo(targetPosition) {
+    // Convert THREE.Vector3 to CANNON.Vec3 (account for collider offset)
+    this.navigationTarget = new CANNON.Vec3(
+      targetPosition.x,
+      targetPosition.y + this.colliderOffset + this.height / 2,
+      targetPosition.z
+    );
+
+    // Enable auto-navigation (disables keyboard controls)
+    this.isNavigating = true;
+  }
+
+  /**
+   * Teleport car to a specific world position (instant)
+   * @param {THREE.Vector3} targetPosition - Target world position
+   */
+  teleport(targetPosition) {
+    // Convert THREE.Vector3 to CANNON.Vec3
+    const cannonPosition = new CANNON.Vec3(
+      targetPosition.x,
+      targetPosition.y + this.colliderOffset + this.height / 2, // Account for collider offset
+      targetPosition.z
+    );
+
+    // Set physics body position
+    this.body.position.copy(cannonPosition);
+
+    // Reset all velocities (stop movement)
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+
+    // Reset rotation (face forward - Z+ direction)
+    const forwardRotation = new CANNON.Quaternion();
+    forwardRotation.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), 0);
+    this.body.quaternion = forwardRotation;
+
+    // Reset speed state
+    this.currentSpeed = 0;
+
+    // Sync mesh immediately
+    this.mesh.position.set(
+      this.body.position.x,
+      this.body.position.y,
+      this.body.position.z
+    );
+    this.mesh.quaternion.set(0, 0, 0, 1);
+
+    // Disable navigation
+    this.isNavigating = false;
+    this.navigationTarget = null;
   }
 
   /**
@@ -100,42 +162,71 @@ export default class Car {
    * Create visual mesh for the car
    */
   createMesh() {
-    // Create geometry
-    const geometry = new THREE.BoxGeometry(
-      this.length,
-      this.height,
-      this.width
-    );
+    this.mesh = new THREE.Group();
+    this.mesh.position.set(0, 0, 0);
+    this.mesh.scale.set(1, 1, 1);
 
-    // Create material
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x3366ff,
-      metalness: 0.7,
-      roughness: 0.3
-    });
-
-    // Create mesh
-    this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-
-    // Add to scene
-    this.scene.instance.add(this.mesh);
-
-    // Create debug arrow helper (points forward)
-    const arrowLength = 2;
-    const arrowHelper = new THREE.ArrowHelper(
-      new THREE.Vector3(0, 0, 1), // Forward direction (local Z+)
-      new THREE.Vector3(0, this.height / 2 + 0.3, 0), // Position slightly above car center
-      arrowLength,
-      0xff0000, // Red color
-      arrowLength * 0.2, // Head length
-      arrowLength * 0.1 // Head width
-    );
+    const loader = new GLTFLoader();
+    const modelPath = new URL('../assets/models/car.glb', import.meta.url).href;
     
-    // Add arrow as child of mesh so it moves and rotates with the car
-    this.mesh.add(arrowHelper);
-    this.debugArrow = arrowHelper;
+    loader.load(
+      modelPath,
+      (gltf) => {
+        const model = gltf.scene;
+        
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        
+        model.position.x = -center.x;
+        model.position.y = -center.y;
+        model.position.z = -center.z;
+        
+        const targetLength = this.length;
+        const scale = targetLength / size.z;
+        model.scale.set(scale, scale, scale);
+        
+        let minY = Infinity;
+        
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            
+            const box = new THREE.Box3().setFromObject(child);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            const worldPos = new THREE.Vector3();
+            child.getWorldPosition(worldPos);
+            const bottomY = worldPos.y - size.y / 2;
+            if (bottomY < minY) {
+              minY = bottomY;
+            }
+            
+            if (child.material) {
+              child.material = new THREE.MeshStandardMaterial({
+                map: child.material.map || null,
+                color: child.material.color || 0xffffff,
+                metalness: child.material.metalness || 0.5,
+                roughness: child.material.roughness || 0.4
+              });
+            }
+          }
+        });
+        
+        if (minY !== Infinity) {
+          model.position.y -= minY;
+        }
+        
+        this.mesh.add(model);
+      },
+      undefined,
+      (error) => {
+        console.error('Car model yüklenemedi:', error);
+      }
+    );
+
+    this.scene.instance.add(this.mesh);
   }
 
   /**
@@ -215,6 +306,51 @@ export default class Car {
     lockedVelocity.y = 0; // Also lock Y velocity
     this.body.velocity = lockedVelocity;
 
+    // Handle auto-navigation
+    if (this.isNavigating && this.navigationTarget) {
+      const currentPos = this.body.position;
+      const targetPos = this.navigationTarget;
+      
+      // Calculate distance to target
+      const distance = currentPos.distanceTo(targetPos);
+      
+      // Check if arrived
+      if (distance < this.navigationArrivalDistance) {
+        // Arrived - stop navigation and re-enable controls
+        this.isNavigating = false;
+        this.navigationTarget = null;
+        this.body.velocity.set(0, 0, 0);
+        this.currentSpeed = 0;
+      } else {
+        // Navigate towards target
+        const direction = new CANNON.Vec3();
+        targetPos.vsub(currentPos, direction);
+        direction.normalize();
+        
+        // Apply force towards target (only Z axis movement)
+        const targetZ = targetPos.z;
+        const currentZ = currentPos.z;
+        const zDistance = targetZ - currentZ;
+        
+        if (Math.abs(zDistance) > 0.5) {
+          // Move forward or backward based on Z distance
+          const navigationSpeed = 15; // Navigation speed
+          const forceMagnitude = navigationSpeed * this.mass;
+          const force = new CANNON.Vec3(0, 0, zDistance > 0 ? forceMagnitude : -forceMagnitude);
+          this.body.applyForce(force, this.body.position);
+        } else {
+          // Close enough on Z axis, stop
+          this.isNavigating = false;
+          this.navigationTarget = null;
+          this.body.velocity.set(0, 0, 0);
+          this.currentSpeed = 0;
+        }
+      }
+      
+      // Skip keyboard input during navigation
+      return;
+    }
+
     // Check if any movement input is active
     const hasInput = this.keys.forward || this.keys.backward;
 
@@ -239,8 +375,8 @@ export default class Car {
       }
     }
 
-    // Strict idle stabilization when no input
-    if (!hasInput) {
+    // Strict idle stabilization when no input (skip during navigation)
+    if (!hasInput && !this.isNavigating) {
       // Aggressively damp Z velocity toward zero
       const dampingFactor = 0.85; // Strong damping (15% reduction per frame)
       const dampedZ = velocity.z * dampingFactor;
