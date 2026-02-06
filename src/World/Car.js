@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * Car - Drivable car with physics and keyboard controls
@@ -11,31 +12,30 @@ export default class Car {
     this.physicsWorld = this.experience.physicsWorld;
 
     // Car dimensions
-    this.width = 1.6;
-    this.height = 0.6;
-    this.length = 3.5;
+    this.width = 100;
+    this.height = -0.01;
+    this.length = 5;
 
     // Car physics properties
     this.mass = 800; // kg
-    this.maxSpeed = 25; // m/s
-    this.acceleration = 25; // m/s² (increased to overcome static friction)
-    this.brakingForce = 20; // m/s²
-    this.steeringAngle = 0.3; // radians
-    this.steeringSpeed = 2; // radians per second
-    this.steeringTorque = 100; // Angular force for steering (increased for better responsiveness)
+    this.maxSpeed = 15; // m/s
+    this.acceleration = 5; // m/s² (increased to overcome static friction)
+    this.brakingForce = 10; // m/s²
     this.colliderOffset = 0.1; // Lift collider slightly above ground
 
     // Current state
-    this.currentSteering = 0;
     this.currentSpeed = 0;
 
-    // Keyboard state
+    // Keyboard state (only forward/backward)
     this.keys = {
       forward: false,
-      backward: false,
-      left: false,
-      right: false
+      backward: false
     };
+
+    // Auto-navigation state
+    this.isNavigating = false;
+    this.navigationTarget = null;
+    this.navigationArrivalDistance = 2; // Distance threshold for arrival
 
     // Create physics body
     this.createPhysicsBody();
@@ -50,6 +50,62 @@ export default class Car {
     this.experience.time.on('tick', () => {
       this.update();
     });
+  }
+
+  /**
+   * Navigate car to a specific world position (smooth movement)
+   * @param {THREE.Vector3} targetPosition - Target world position
+   */
+  navigateTo(targetPosition) {
+    // Convert THREE.Vector3 to CANNON.Vec3 (account for collider offset)
+    this.navigationTarget = new CANNON.Vec3(
+      targetPosition.x,
+      targetPosition.y + this.colliderOffset + this.height / 2,
+      targetPosition.z
+    );
+
+    // Enable auto-navigation (disables keyboard controls)
+    this.isNavigating = true;
+  }
+
+  /**
+   * Teleport car to a specific world position (instant)
+   * @param {THREE.Vector3} targetPosition - Target world position
+   */
+  teleport(targetPosition) {
+    // Convert THREE.Vector3 to CANNON.Vec3
+    const cannonPosition = new CANNON.Vec3(
+      targetPosition.x,
+      targetPosition.y + this.colliderOffset + this.height / 2, // Account for collider offset
+      targetPosition.z
+    );
+
+    // Set physics body position
+    this.body.position.copy(cannonPosition);
+
+    // Reset all velocities (stop movement)
+    this.body.velocity.set(0, 0, 0);
+    this.body.angularVelocity.set(0, 0, 0);
+
+    // Reset rotation (face forward - Z+ direction)
+    const forwardRotation = new CANNON.Quaternion();
+    forwardRotation.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), 0);
+    this.body.quaternion = forwardRotation;
+
+    // Reset speed state
+    this.currentSpeed = 0;
+
+    // Sync mesh immediately
+    this.mesh.position.set(
+      this.body.position.x,
+      this.body.position.y,
+      this.body.position.z
+    );
+    this.mesh.quaternion.set(0, 0, 0, 1);
+
+    // Disable navigation
+    this.isNavigating = false;
+    this.navigationTarget = null;
   }
 
   /**
@@ -106,46 +162,75 @@ export default class Car {
    * Create visual mesh for the car
    */
   createMesh() {
-    // Create geometry
-    const geometry = new THREE.BoxGeometry(
-      this.length,
-      this.height,
-      this.width
-    );
+    this.mesh = new THREE.Group();
+    this.mesh.position.set(0, 0, 0);
+    this.mesh.scale.set(1, 1, 1);
 
-    // Create material
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x3366ff,
-      metalness: 0.7,
-      roughness: 0.3
-    });
-
-    // Create mesh
-    this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-
-    // Add to scene
-    this.scene.instance.add(this.mesh);
-
-    // Create debug arrow helper (points forward)
-    const arrowLength = 2;
-    const arrowHelper = new THREE.ArrowHelper(
-      new THREE.Vector3(0, 0, 1), // Forward direction (local Z+)
-      new THREE.Vector3(0, this.height / 2 + 0.3, 0), // Position slightly above car center
-      arrowLength,
-      0xff0000, // Red color
-      arrowLength * 0.2, // Head length
-      arrowLength * 0.1 // Head width
-    );
+    const loader = new GLTFLoader();
+    const modelPath = new URL('../assets/models/car.glb', import.meta.url).href;
     
-    // Add arrow as child of mesh so it moves and rotates with the car
-    this.mesh.add(arrowHelper);
-    this.debugArrow = arrowHelper;
+    loader.load(
+      modelPath,
+      (gltf) => {
+        const model = gltf.scene;
+        
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        
+        model.position.x = -center.x;
+        model.position.y = -center.y;
+        model.position.z = -center.z;
+        
+        const targetLength = this.length;
+        const scale = targetLength / size.z;
+        model.scale.set(scale, scale, scale);
+        
+        let minY = Infinity;
+        
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            
+            const box = new THREE.Box3().setFromObject(child);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            const worldPos = new THREE.Vector3();
+            child.getWorldPosition(worldPos);
+            const bottomY = worldPos.y - size.y / 2;
+            if (bottomY < minY) {
+              minY = bottomY;
+            }
+            
+            if (child.material) {
+              child.material = new THREE.MeshStandardMaterial({
+                map: child.material.map || null,
+                color: child.material.color || 0xffffff,
+                metalness: child.material.metalness || 0.5,
+                roughness: child.material.roughness || 0.4
+              });
+            }
+          }
+        });
+        
+        if (minY !== Infinity) {
+          model.position.y -= minY;
+        }
+        
+        this.mesh.add(model);
+      },
+      undefined,
+      (error) => {
+        console.error('Car model yüklenemedi:', error);
+      }
+    );
+
+    this.scene.instance.add(this.mesh);
   }
 
   /**
-   * Setup keyboard controls
+   * Setup keyboard controls (forward/backward only)
    */
   setupControls() {
     // Key down handler
@@ -158,14 +243,6 @@ export default class Car {
         case 's':
         case 'arrowdown':
           this.keys.backward = true;
-          break;
-        case 'a':
-        case 'arrowleft':
-          this.keys.left = true;
-          break;
-        case 'd':
-        case 'arrowright':
-          this.keys.right = true;
           break;
       }
     });
@@ -180,14 +257,6 @@ export default class Car {
         case 's':
         case 'arrowdown':
           this.keys.backward = false;
-          break;
-        case 'a':
-        case 'arrowleft':
-          this.keys.left = false;
-          break;
-        case 'd':
-        case 'arrowright':
-          this.keys.right = false;
           break;
       }
     });
@@ -213,94 +282,111 @@ export default class Car {
       this.body.velocity = velocity;
     }
 
-    // Lock rotation to Y axis only (prevent pitch and roll)
-    // IMPORTANT: Only lock X and Z, Y (yaw) must remain free for steering
+    // Lock ALL rotation (prevent any rotation - timeline movement only)
     const angularVelocity = this.body.angularVelocity;
     angularVelocity.x = 0; // Lock pitch rotation
+    angularVelocity.y = 0; // Lock yaw rotation (no steering)
     angularVelocity.z = 0; // Lock roll rotation
-    // DO NOT lock angularVelocity.y - this is needed for steering!
     this.body.angularVelocity = angularVelocity;
+    
+    // Lock rotation quaternion to initial orientation
+    // Keep car facing forward (Z+ direction) at all times
+    const initialRotation = new CANNON.Quaternion();
+    initialRotation.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), 0); // No rotation
+    this.body.quaternion = initialRotation;
 
-    // Get car's forward direction in world space (local Z+)
-    const forward = new CANNON.Vec3();
-    this.body.quaternion.vmult(new CANNON.Vec3(0, 0, 1), forward);
+    // Get car's forward direction (always Z+ in world space - no rotation)
+    const forward = new CANNON.Vec3(0, 0, 1);
 
-    // Calculate current speed in forward direction
-    this.currentSpeed = forward.dot(velocity);
+    // Calculate current speed in forward direction (Z axis)
+    this.currentSpeed = velocity.z;
 
-    // STEERING: Apply yaw rotation DIRECTLY to car physics body
-    // A = rotate left (positive Y torque), D = rotate right (negative Y torque)
-    // Applied ONLY to car.body - NEVER to camera, scene, or world
-    if (this.keys.left) {
-      // A key: rotate car left (positive Y torque on car body)
-      const leftTorque = this.steeringTorque;
-      this.body.applyTorque(new CANNON.Vec3(0, leftTorque, 0));
-    } else if (this.keys.right) {
-      // D key: rotate car right (negative Y torque on car body)
-      const rightTorque = -this.steeringTorque;
-      this.body.applyTorque(new CANNON.Vec3(0, rightTorque, 0));
-    } else {
-      // No steering input: damp angular velocity Y only
-      const angularVel = this.body.angularVelocity;
-      angularVel.y *= 0.9; // Gentle damping when no steering input
-      this.body.angularVelocity = angularVel;
+    // Prevent sideways drift - lock X velocity (lateral movement)
+    const lockedVelocity = new CANNON.Vec3(0, 0, velocity.z);
+    lockedVelocity.y = 0; // Also lock Y velocity
+    this.body.velocity = lockedVelocity;
+
+    // Handle auto-navigation
+    if (this.isNavigating && this.navigationTarget) {
+      const currentPos = this.body.position;
+      const targetPos = this.navigationTarget;
+      
+      // Calculate distance to target
+      const distance = currentPos.distanceTo(targetPos);
+      
+      // Check if arrived
+      if (distance < this.navigationArrivalDistance) {
+        // Arrived - stop navigation and re-enable controls
+        this.isNavigating = false;
+        this.navigationTarget = null;
+        this.body.velocity.set(0, 0, 0);
+        this.currentSpeed = 0;
+      } else {
+        // Navigate towards target
+        const direction = new CANNON.Vec3();
+        targetPos.vsub(currentPos, direction);
+        direction.normalize();
+        
+        // Apply force towards target (only Z axis movement)
+        const targetZ = targetPos.z;
+        const currentZ = currentPos.z;
+        const zDistance = targetZ - currentZ;
+        
+        if (Math.abs(zDistance) > 0.5) {
+          // Move forward or backward based on Z distance
+          const navigationSpeed = 15; // Navigation speed
+          const forceMagnitude = navigationSpeed * this.mass;
+          const force = new CANNON.Vec3(0, 0, zDistance > 0 ? forceMagnitude : -forceMagnitude);
+          this.body.applyForce(force, this.body.position);
+        } else {
+          // Close enough on Z axis, stop
+          this.isNavigating = false;
+          this.navigationTarget = null;
+          this.body.velocity.set(0, 0, 0);
+          this.currentSpeed = 0;
+        }
+      }
+      
+      // Skip keyboard input during navigation
+      return;
     }
 
     // Check if any movement input is active
     const hasInput = this.keys.forward || this.keys.backward;
 
-    // Handle acceleration/braking (force along local Z axis)
+    // Handle acceleration/braking (force along world Z axis only)
     if (this.keys.forward) {
-      // Accelerate forward (local Z+)
+      // Accelerate forward (world Z+)
       // Always apply force to overcome static friction, even at max speed
       const forceMagnitude = this.acceleration * this.mass;
       const force = new CANNON.Vec3(0, 0, forceMagnitude);
-      this.body.applyLocalForce(force, new CANNON.Vec3(0, 0, 0));
+      this.body.applyForce(force, this.body.position);
       
       // Limit speed after applying force
       if (this.currentSpeed > this.maxSpeed) {
-        const localVelocity = new CANNON.Vec3();
-        const invQuat = this.body.quaternion.inverse();
-        invQuat.vmult(velocity, localVelocity);
-        localVelocity.z = Math.min(localVelocity.z, this.maxSpeed);
-        const worldVelocity = new CANNON.Vec3();
-        this.body.quaternion.vmult(localVelocity, worldVelocity);
-        worldVelocity.y = 0;
-        this.body.velocity = worldVelocity;
+        const lockedVel = new CANNON.Vec3(0, 0, this.maxSpeed);
+        this.body.velocity = lockedVel;
       }
     } else if (this.keys.backward) {
-      // Brake or reverse (local Z-)
+      // Brake or reverse (world Z-)
       if (this.currentSpeed > -this.maxSpeed * 0.5) {
         const force = new CANNON.Vec3(0, 0, -this.brakingForce * this.mass);
-        this.body.applyLocalForce(force, new CANNON.Vec3(0, 0, 0));
+        this.body.applyForce(force, this.body.position);
       }
     }
 
-    // Strict idle stabilization when no input
-    if (!hasInput) {
-      // Get local velocity
-      const localVelocity = new CANNON.Vec3();
-      const invQuat = this.body.quaternion.inverse();
-      invQuat.vmult(velocity, localVelocity);
-      
-      // Aggressively damp all horizontal velocity toward zero
+    // Strict idle stabilization when no input (skip during navigation)
+    if (!hasInput && !this.isNavigating) {
+      // Aggressively damp Z velocity toward zero
       const dampingFactor = 0.85; // Strong damping (15% reduction per frame)
-      localVelocity.x *= dampingFactor;
-      localVelocity.z *= dampingFactor;
+      const dampedZ = velocity.z * dampingFactor;
       
       // Clamp very small velocities to zero (prevent micro-movements)
       const velocityThreshold = 0.05; // m/s
-      if (Math.abs(localVelocity.x) < velocityThreshold) {
-        localVelocity.x = 0;
-      }
-      if (Math.abs(localVelocity.z) < velocityThreshold) {
-        localVelocity.z = 0;
-      }
+      const finalZ = Math.abs(dampedZ) < velocityThreshold ? 0 : dampedZ;
       
-      // Convert back to world space
-      const worldVelocity = new CANNON.Vec3();
-      this.body.quaternion.vmult(localVelocity, worldVelocity);
-      worldVelocity.y = 0; // Keep Y locked
+      // Lock velocity to Z axis only (no X or Y)
+      const worldVelocity = new CANNON.Vec3(0, 0, finalZ);
       this.body.velocity = worldVelocity;
       
       // Temporarily increase linear damping when idle for extra stability
@@ -320,14 +406,9 @@ export default class Car {
       this.body.position.y,
       this.body.position.z
     );
-    // CRITICAL: Sync quaternion from physics body to mesh
-    // This makes the car visually rotate when steering is applied
-    this.mesh.quaternion.set(
-      this.body.quaternion.x,
-      this.body.quaternion.y,
-      this.body.quaternion.z,
-      this.body.quaternion.w
-    );
-    // Arrow helper is a child of mesh, so it rotates automatically
+    // Car orientation is locked - always facing forward (Z+)
+    // No rotation sync needed since car never rotates
+    this.mesh.quaternion.set(0, 0, 0, 1); // Identity quaternion (no rotation)
+    // Arrow helper is a child of mesh, so it stays aligned forward
   }
 }
