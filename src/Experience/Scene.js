@@ -17,6 +17,7 @@ export default class Scene {
     this.createAxisHelper();
   }
 
+  
   /**
    * Create basic lighting setup
    */
