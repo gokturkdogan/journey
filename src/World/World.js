@@ -381,6 +381,7 @@ export default class World {
     this.scene.instance.add(decorativeGroup);
   }
 
+  
   /**
    * Setup raycaster for UI interactions
    */
