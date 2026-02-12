@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 /**
  * Car - Drivable car with physics and keyboard controls
  */
+
 export default class Car {
   constructor(experience) {
     this.experience = experience;
