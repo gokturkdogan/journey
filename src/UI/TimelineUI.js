@@ -9,6 +9,7 @@ export default class TimelineUI {
     // Collapse state
     this.isCollapsed = true; // Start collapsed
 
+    
     // Create timeline container
     this.createTimeline();
 
