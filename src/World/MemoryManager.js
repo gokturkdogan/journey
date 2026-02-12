@@ -86,6 +86,7 @@ export default class MemoryManager {
    * Set active memory
    * @param {string} memoryId - Memory identifier to activate
    */
+  
   setActiveMemory(memoryId) {
     if (this.activeMemoryId === memoryId) return; // Already active
 
