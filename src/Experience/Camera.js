@@ -11,6 +11,7 @@ export default class Camera {
       height: window.innerHeight
     };
 
+    
     // Create PerspectiveCamera
     this.instance = new THREE.PerspectiveCamera(
       75,
